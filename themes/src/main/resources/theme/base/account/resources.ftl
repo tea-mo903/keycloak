@@ -145,15 +145,19 @@
                                         </td>
                                         <td>
                                             <#list permission.scopes as scope>
-                                                <div class="search-box">
-                                                    <#if scope.scope.displayName??>
-                                                        ${scope.scope.displayName}
-                                                    <#else>
-                                                        ${scope.scope.name}
-                                                    </#if>
-                                                    <button class="close-icon" type="button" id="grant-remove-scope-${resource.name}-${permission.requester.username}-${scope.scope.name}" name="removeScope-${resource.id}-${permission.requester.username}" onclick="removeScopeElm(this.parentNode);document.forms['approveForm-${resource.id}-${permission.requester.username}']['action'].value = 'deny';document.forms['approveForm-${resource.id}-${permission.requester.username}'].submit();"><i class="fa fa-times" aria-hidden="true"></i></button>
-                                                    <input type="hidden" name="permission_id" value="${scope.id}"/>
-                                                </div>
+                                                <#if scope.scope??>
+                                                    <div class="search-box">
+                                                        <#if scope.scope.displayName??>
+                                                            ${scope.scope.displayName}
+                                                        <#else>
+                                                            ${scope.scope.name}
+                                                        </#if>
+                                                        <button class="close-icon" type="button" id="grant-remove-scope-${resource.name}-${permission.requester.username}-${scope.scope.name}" name="removeScope-${resource.id}-${permission.requester.username}" onclick="removeScopeElm(this.parentNode);document.forms['approveForm-${resource.id}-${permission.requester.username}']['action'].value = 'deny';document.forms['approveForm-${resource.id}-${permission.requester.username}'].submit();"><i class="fa fa-times" aria-hidden="true"></i></button>
+                                                        <input type="hidden" name="permission_id" value="${scope.id}"/>
+                                                    </div>
+                                                <#else>
+                                                    ${msg("anyPermission")}
+                                                </#if>
                                             </#list>
                                         </td>
                                         <td width="20%" align="middle" style="vertical-align: middle">
@@ -204,14 +208,14 @@
                                 <#if resource.shares?size != 0>
                                     <a href="${url.getResourceDetailUrl(resource.id)}">${resource.shares?size} <i class="fa fa-users"></i></a>
                                 <#else>
-                                    This resource is not being shared.
+                                    ${msg("notBeingShared")}
                                 </#if>
                             </td>
                         </tr>
                     </#list>
                 <#else>
                     <tr>
-                        <td colspan="4">You don't have any resource</td>
+                        <td colspan="4">${msg("notHaveAnyResource")}</td>
                     </tr>
                 </#if>
                 </tbody>
@@ -262,7 +266,7 @@
                                             <ul>
                                                 <#list resource.permissions as permission>
                                                     <#list permission.scopes as scope>
-                                                        <#if scope.granted>
+                                                        <#if scope.granted && scope.scope??>
                                                             <li>
                                                                 <#if scope.scope.displayName??>
                                                                     ${scope.scope.displayName}
@@ -270,6 +274,8 @@
                                                                     ${scope.scope.name}
                                                                 </#if>
                                                             </li>
+                                                        <#else>
+                                                            ${msg("anyPermission")}
                                                         </#if>
                                                     </#list>
                                                 </#list>
@@ -285,7 +291,7 @@
                             </#list>
                         <#else>
                             <tr>
-                                <td colspan="5">There are no resources shared with you</td>
+                                <td colspan="6">${msg("noResourcesSharedWithYou")}</td>
                             </tr>
                         </#if>
                     </tbody>
@@ -310,11 +316,8 @@
         </div>
         <div class="row">
             <div class="col-md-12">
-                <#if authorization.resourcesWaitingOthersApproval?size != 0>
-                    <i class="pficon pficon-info"></i> You have ${authorization.resourcesWaitingOthersApproval?size} permission request(s) <a href="#" onclick="document.getElementById('waitingApproval').style.display=''">waiting</a> for approval.
-                <#else>
-                    You have no permission requests waiting for approval.
-                </#if>
+                <i class="pficon pficon-info"></i> ${msg("havePermissionRequestsWaitingForApproval",authorization.resourcesWaitingOthersApproval?size)}
+                <a href="#" onclick="document.getElementById('waitingApproval').style.display=''">${msg("clickHereForDetails")}</a>
                 <div class="row">
                     <div class="col-md-12"></div>
                 </div>
@@ -355,10 +358,14 @@
                                                     <#list resource.permissions as permission>
                                                         <#list permission.scopes as scope>
                                                             <li>
-                                                                <#if scope.scope.displayName??>
-                                                                    ${scope.scope.displayName}
+                                                                <#if scope.scope??>
+                                                                    <#if scope.scope.displayName??>
+                                                                        ${scope.scope.displayName}
+                                                                    <#else>
+                                                                        ${scope.scope.name}
+                                                                    </#if>
                                                                 <#else>
-                                                                    ${scope.scope.name}
+                                                                    ${msg("anyPermission")}
                                                                 </#if>
                                                             </li>
                                                         </#list>

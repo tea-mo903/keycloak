@@ -19,6 +19,8 @@ package org.keycloak.admin.client.resource;
 
 import org.jboss.resteasy.annotations.cache.NoCache;
 import org.keycloak.representations.idm.GroupRepresentation;
+import org.keycloak.representations.idm.ManagementPermissionReference;
+import org.keycloak.representations.idm.ManagementPermissionRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
 
 import javax.ws.rs.Consumes;
@@ -38,6 +40,30 @@ import java.util.List;
  * @version $Revision: 1 $
  */
 public interface GroupResource {
+
+    /**
+     * Enables or disables the fine grain permissions feature.
+     * Returns the updated status of the server in the
+     * {@link ManagementPermissionReference}.
+     *
+     * @param status status request to apply
+     * @return permission reference indicating the updated status
+     */
+    @PUT
+    @Path("/management/permissions")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    ManagementPermissionReference setPermissions(ManagementPermissionRepresentation status);
+
+    /**
+     * Returns indicator if the fine grain permissions are enabled or not.
+     *
+     * @return current representation of the permissions feature
+     */
+    @GET
+    @Path("/management/permissions")
+    @Produces(MediaType.APPLICATION_JSON)
+    ManagementPermissionReference getPermissions();
 
     /**
      * Does not expand hierarchy.  Subgroups will not be set.
@@ -91,6 +117,7 @@ public interface GroupResource {
     @Path("/members")
     @Produces(MediaType.APPLICATION_JSON)
     public List<UserRepresentation> members();
+
     /**
      * Get users
      * <p/>
@@ -106,4 +133,24 @@ public interface GroupResource {
     @Produces(MediaType.APPLICATION_JSON)
     public List<UserRepresentation> members(@QueryParam("first") Integer firstResult,
                                             @QueryParam("max") Integer maxResults);
+
+    /**
+     * Get users
+     * <p/>
+     * Returns a list of users, filtered according to query parameters
+     *
+     * @param firstResult Pagination offset
+     * @param maxResults  Pagination size
+     * @param briefRepresentation Only return basic information (only guaranteed to return id, username, created, first and last name,
+     *      email, enabled state, email verification state, federation link, and access.
+     *      Note that it means that namely user attributes, required actions, and not before are not returned.)
+     * @return
+     */
+    @GET
+    @NoCache
+    @Path("/members")
+    @Produces(MediaType.APPLICATION_JSON)
+    public List<UserRepresentation> members(@QueryParam("first") Integer firstResult,
+                                            @QueryParam("max") Integer maxResults,
+                                            @QueryParam("briefRepresentation") Boolean briefRepresentation);
 }

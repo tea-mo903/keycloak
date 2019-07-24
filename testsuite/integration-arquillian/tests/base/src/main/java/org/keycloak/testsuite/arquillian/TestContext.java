@@ -17,15 +17,19 @@
 package org.keycloak.testsuite.arquillian;
 
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 import org.keycloak.admin.client.Keycloak;
 import org.keycloak.representations.idm.RealmRepresentation;
+import static org.keycloak.testsuite.arquillian.AppServerTestEnricher.getAppServerQualifiers;
 import org.keycloak.testsuite.client.KeycloakTestingClient;
 import org.keycloak.testsuite.util.TestCleanup;
+import org.keycloak.testsuite.utils.arquillian.ContainerConstants;
 
 /**
  *
@@ -42,11 +46,9 @@ public final class TestContext {
 
     private boolean adminLoggedIn;
     
-    private final Map<Object, Object> customContext = new HashMap<>();
-
     private Keycloak adminClient;
     private KeycloakTestingClient testingClient;
-    private List<RealmRepresentation> testRealmReps;
+    private List<RealmRepresentation> testRealmReps = new ArrayList<>();
 
     // Track if particular test was initialized. What exactly means "initialized" is test dependent (Eg. some user in @Before method was created, so we can set initialized to true
     // to avoid creating user when @Before method is executed for 2nd time)
@@ -80,23 +82,42 @@ public final class TestContext {
     public List<ContainerInfo> getAppServerBackendsInfo() {
         return appServerBackendsInfo;
     }
+    
+    public void setAppServerBackendsInfo(List<ContainerInfo> appServerBackendsInfo) {
+        Collections.sort(appServerBackendsInfo);
+        this.appServerBackendsInfo.addAll(appServerBackendsInfo);
+    }
 
     public Class getTestClass() {
         return testClass;
     }
 
     public boolean isAdapterTest() {
-        return appServerInfo != null;
+        return !getAppServerQualifiers(testClass).isEmpty();
     }
 
+    public boolean isAdapterContainerEnabled() {
+        if (!isAdapterTest()) return false; //no adapter test
+        return getAppServerQualifiers(testClass).contains(ContainerConstants.APP_SERVER_PREFIX + AppServerTestEnricher.CURRENT_APP_SERVER);
+    }
+
+    public boolean isAdapterContainerEnabledCluster() {
+        if (!isAdapterTest()) return false; //no adapter test
+        if (appServerBackendsInfo.isEmpty()) return false; //no adapter clustered test
+        
+        Set<String> appServerQualifiers = getAppServerQualifiers(testClass);
+        
+        String qualifier = appServerBackendsInfo.stream()
+                .map(ContainerInfo::getQualifier)
+                .collect(Collectors.joining(";"));
+        
+        return appServerQualifiers.contains(qualifier);
+    }
+    
     public boolean isRelativeAdapterTest() {
         return isAdapterTest()
                 && appServerInfo.getQualifier().equals(
                         suiteContext.getAuthServerInfo().getQualifier()); // app server == auth server
-    }
-
-    public boolean isClusteredAdapterTest() {
-        return isAdapterTest() && !appServerBackendsInfo.isEmpty();
     }
 
     public SuiteContext getSuiteContext() {
@@ -106,7 +127,7 @@ public final class TestContext {
     @Override
     public String toString() {
         return "TEST CONTEXT: " + getTestClass().getCanonicalName() + "\n"
-                + (isAdapterTest() ? "App server container: " + getAppServerInfo() + "\n" : "");
+                + (isAdapterTest() ? "Activated @AppServerContainer(" + getAppServerQualifiers(testClass) + ")\n" : "");
     }
 
     public Keycloak getAdminClient() {
@@ -133,6 +154,14 @@ public final class TestContext {
         this.testRealmReps = testRealmReps;
     }
 
+    public void addTestRealmToTestRealmReps(RealmRepresentation testRealmRep) {
+        this.testRealmReps.add(testRealmRep);
+    }
+
+    public void addTestRealmsToTestRealmReps(List<RealmRepresentation> testRealmReps) {
+        this.testRealmReps.addAll(testRealmReps);
+    }
+
     public boolean isInitialized() {
         return initialized;
     }
@@ -144,7 +173,7 @@ public final class TestContext {
     public TestCleanup getOrCreateCleanup(String realmName) {
         TestCleanup cleanup = cleanups.get(realmName);
         if (cleanup == null) {
-            cleanup = new TestCleanup(adminClient, realmName);
+            cleanup = new TestCleanup(this, realmName);
             TestCleanup existing = cleanups.putIfAbsent(realmName, cleanup);
 
             if (existing != null) {
@@ -159,12 +188,16 @@ public final class TestContext {
     }
 
 
-    public Object getCustomValue(Object key) {
-        return customContext.get(key);
-    }
-    
-    public void setCustomValue(Object key, Object value) {
-        customContext.put(key, value);
-    }
+    public String getAppServerContainerName() {
+        if (isAdapterContainerEnabled()) { //standalone app server
+            return getAppServerInfo().getArquillianContainer().getName();
 
+        } else if (isAdapterContainerEnabledCluster()) { //clustered app server
+
+            return getAppServerBackendsInfo().stream()
+                .map(ContainerInfo::getQualifier)
+                .collect(Collectors.joining(";"));
+        }
+        return null;
+    }
 }

@@ -18,7 +18,7 @@
 
 package org.keycloak.adapters.elytron;
 
-import org.bouncycastle.asn1.cmp.Challenge;
+import io.undertow.server.handlers.CookieImpl;
 import org.keycloak.KeycloakSecurityContext;
 import org.keycloak.adapters.AdapterDeploymentContext;
 import org.keycloak.adapters.AdapterTokenStore;
@@ -30,10 +30,8 @@ import org.keycloak.adapters.spi.AuthenticationError;
 import org.keycloak.adapters.spi.LogoutError;
 import org.keycloak.enums.TokenStore;
 import org.wildfly.security.auth.server.SecurityIdentity;
-import org.wildfly.security.http.HttpAuthenticationException;
 import org.wildfly.security.http.HttpScope;
 import org.wildfly.security.http.HttpServerCookie;
-import org.wildfly.security.http.HttpServerMechanismsResponder;
 import org.wildfly.security.http.HttpServerRequest;
 import org.wildfly.security.http.HttpServerResponse;
 import org.wildfly.security.http.Scope;
@@ -61,6 +59,8 @@ import java.util.function.Consumer;
  * @author <a href="mailto:psilva@redhat.com">Pedro Igor</a>
  */
 class ElytronHttpFacade implements OIDCHttpFacade {
+
+    static final String UNDERTOW_EXCHANGE = ElytronHttpFacade.class.getName() + ".undertow.exchange";
 
     private final HttpServerRequest request;
     private final CallbackHandler callbackHandler;
@@ -198,9 +198,13 @@ class ElytronHttpFacade implements OIDCHttpFacade {
                 if (query != null) {
                     String[] parameters = query.split("&");
                     for (String parameter : parameters) {
-                        String[] keyValue = parameter.split("=");
+                        String[] keyValue = parameter.split("=", 2);
                         if (keyValue[0].equals(param)) {
-                            return keyValue[1];
+                            try {
+                                return URLDecoder.decode(keyValue[1], "UTF-8");
+                            } catch (IOException e) {
+                                throw new RuntimeException("Failed to decode request URI", e);
+                            }
                         }
                     }
                 }
@@ -312,6 +316,17 @@ class ElytronHttpFacade implements OIDCHttpFacade {
             @Override
             public void resetCookie(final String name, final String path) {
                 responseConsumer = responseConsumer.andThen(response -> setCookie(name, "", path, null, 0, false, false, response));
+                HttpScope exchangeScope = getScope(Scope.EXCHANGE);
+                ProtectedHttpServerExchange undertowExchange = ProtectedHttpServerExchange.class.cast(exchangeScope.getAttachment(UNDERTOW_EXCHANGE));
+
+                if (undertowExchange != null) {
+                    CookieImpl cookie = new CookieImpl(name, "");
+
+                    cookie.setMaxAge(0);
+                    cookie.setPath(path);
+
+                    undertowExchange.getExchange().setResponseCookie(cookie);
+                }
             }
 
             @Override

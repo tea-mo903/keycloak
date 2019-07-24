@@ -40,6 +40,10 @@ public class OIDCConfigurationRepresentation {
     @JsonProperty("token_endpoint")
     private String tokenEndpoint;
 
+    /**
+     * The name 'token_introspection_endpoint' is deprecated and will be replaced by 'introspection_endpoint' as defined by RFC-8414.
+     * Until there, we just add {@code getIntrospectionEndpoint} claim to avoid breaking backward compatibility.
+     */
     @JsonProperty("token_introspection_endpoint")
     private String tokenIntrospectionEndpoint;
 
@@ -103,6 +107,15 @@ public class OIDCConfigurationRepresentation {
     @JsonProperty("request_uri_parameter_supported")
     private Boolean requestUriParameterSupported;
 
+    // KEYCLOAK-7451 OAuth Authorization Server Metadata for Proof Key for Code Exchange
+    @JsonProperty("code_challenge_methods_supported")
+    private List<String> codeChallengeMethodsSupported;
+
+    // KEYCLOAK-6771 Certificate Bound Token
+    // https://tools.ietf.org/html/draft-ietf-oauth-mtls-08#section-6.2
+    @JsonProperty("tls_client_certificate_bound_access_tokens")
+    private Boolean tlsClientCertificateBoundAccessTokens;
+
     protected Map<String, Object> otherClaims = new HashMap<String, Object>();
 
     public String getIssuer() {
@@ -131,6 +144,16 @@ public class OIDCConfigurationRepresentation {
 
     public String getTokenIntrospectionEndpoint() {
         return this.tokenIntrospectionEndpoint;
+    }
+
+    /**
+     * See KEYCLOAK-8308. This method should be removed once the standard name is used to advertise the introspection endpoint.
+     * @return
+     */
+    @Deprecated
+    @JsonProperty("introspection_endpoint")
+    private String getIntrospectionEndpoint() {
+        return getTokenIntrospectionEndpoint();
     }
 
     public void setTokenIntrospectionEndpoint(String tokenIntrospectionEndpoint) {
@@ -295,6 +318,25 @@ public class OIDCConfigurationRepresentation {
 
     public void setRequestUriParameterSupported(Boolean requestUriParameterSupported) {
         this.requestUriParameterSupported = requestUriParameterSupported;
+    }
+
+    // KEYCLOAK-7451 OAuth Authorization Server Metadata for Proof Key for Code Exchange
+    public List<String> getCodeChallengeMethodsSupported() {
+        return codeChallengeMethodsSupported;
+    }
+
+    public void setCodeChallengeMethodsSupported(List<String> codeChallengeMethodsSupported) {
+        this.codeChallengeMethodsSupported = codeChallengeMethodsSupported;
+    }
+
+    // KEYCLOAK-6771 Certificate Bound Token
+    // https://tools.ietf.org/html/draft-ietf-oauth-mtls-08#section-6.2
+    public Boolean getTlsClientCertificateBoundAccessTokens() {
+        return tlsClientCertificateBoundAccessTokens;
+    }
+
+    public void setTlsClientCertificateBoundAccessTokens(Boolean tlsClientCertificateBoundAccessTokens) {
+        this.tlsClientCertificateBoundAccessTokens = tlsClientCertificateBoundAccessTokens;
     }
 
     @JsonAnyGetter

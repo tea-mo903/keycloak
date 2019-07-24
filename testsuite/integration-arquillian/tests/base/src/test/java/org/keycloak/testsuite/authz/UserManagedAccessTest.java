@@ -22,7 +22,9 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+import java.util.Arrays;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 
 import javax.ws.rs.core.Response;
@@ -33,13 +35,18 @@ import org.keycloak.admin.client.resource.AuthorizationResource;
 import org.keycloak.admin.client.resource.ClientResource;
 import org.keycloak.authorization.client.AuthorizationDeniedException;
 import org.keycloak.authorization.client.resource.PermissionResource;
+import org.keycloak.authorization.client.util.HttpResponseException;
 import org.keycloak.representations.AccessToken;
+import org.keycloak.representations.idm.authorization.AuthorizationRequest;
 import org.keycloak.representations.idm.authorization.AuthorizationResponse;
 import org.keycloak.representations.idm.authorization.JSPolicyRepresentation;
 import org.keycloak.representations.idm.authorization.Permission;
 import org.keycloak.representations.idm.authorization.PermissionTicketRepresentation;
+import org.keycloak.representations.idm.authorization.PolicyEnforcementMode;
 import org.keycloak.representations.idm.authorization.ResourcePermissionRepresentation;
 import org.keycloak.representations.idm.authorization.ResourceRepresentation;
+import org.keycloak.representations.idm.authorization.ResourceServerRepresentation;
+import org.keycloak.representations.idm.authorization.ScopePermissionRepresentation;
 
 /**
  * @author <a href="mailto:psilva@redhat.com">Pedro Igor</a>
@@ -56,10 +63,9 @@ public class UserManagedAccessTest extends AbstractResourceServerTest {
         JSPolicyRepresentation policy = new JSPolicyRepresentation();
 
         policy.setName("Only Owner Policy");
-        policy.setCode("print($evaluation.getPermission().getResource().getOwner());print($evaluation.getContext().getIdentity().getId());if ($evaluation.getContext().getIdentity().getId() == $evaluation.getPermission().getResource().getOwner()) {$evaluation.grant();}");
+        policy.setCode("if ($evaluation.getContext().getIdentity().getId() == $evaluation.getPermission().getResource().getOwner()) {$evaluation.grant();}");
 
-        Response response = authorization.policies().js().create(policy);
-        response.close();
+        authorization.policies().js().create(policy).close();
     }
 
     @Test
@@ -84,7 +90,7 @@ public class UserManagedAccessTest extends AbstractResourceServerTest {
 
         assertNotNull(authorization);
 
-        List<Permission> permissions = authorization.getPermissions();
+        Collection<Permission> permissions = authorization.getPermissions();
 
         assertNotNull(permissions);
         assertPermissions(permissions, resource.getName(), "ScopeA", "ScopeB");
@@ -96,6 +102,159 @@ public class UserManagedAccessTest extends AbstractResourceServerTest {
         } catch (AuthorizationDeniedException ade) {
 
         }
+    }
+
+    @Test
+    public void testOnlyOwnerCanAccessPermissionsToScope() throws Exception {
+        resource = addResource("Resource A", "marta", true, "ScopeA", "ScopeB");
+        ScopePermissionRepresentation permission = new ScopePermissionRepresentation();
+
+        permission.setName(resource.getName() + " Scope A Permission");
+        permission.addScope("ScopeA");
+        permission.addPolicy("Only Owner Policy");
+
+        getClient(getRealm()).authorization().permissions().scope().create(permission).close();
+
+        permission = new ScopePermissionRepresentation();
+
+        permission.setName(resource.getName() + " Scope B Permission");
+        permission.addScope("ScopeB");
+        permission.addPolicy("Only Owner Policy");
+
+        getClient(getRealm()).authorization().permissions().scope().create(permission).close();
+
+        AuthorizationResponse response = authorize("marta", "password", resource.getName(), new String[] {"ScopeA", "ScopeB"});
+        String rpt = response.getToken();
+
+        assertNotNull(rpt);
+        assertFalse(response.isUpgraded());
+
+        AccessToken accessToken = toAccessToken(rpt);
+        AccessToken.Authorization authorization = accessToken.getAuthorization();
+
+        assertNotNull(authorization);
+
+        Collection<Permission> permissions = authorization.getPermissions();
+
+        assertNotNull(permissions);
+        assertPermissions(permissions, resource.getName(), "ScopeA", "ScopeB");
+        assertTrue(permissions.isEmpty());
+
+        try {
+            response = authorize("kolo", "password", resource.getId(), new String[] {"ScopeA", "ScopeB"});
+            fail("User should not have access to resource from another user");
+        } catch (AuthorizationDeniedException ade) {
+        }
+
+        List<PermissionTicketRepresentation> tickets = getAuthzClient().protection().permission().find(resource.getId(), null, null, null, null, null, null, null);
+
+        for (PermissionTicketRepresentation ticket : tickets) {
+            ticket.setGranted(true);
+            getAuthzClient().protection().permission().update(ticket);
+        }
+
+        try {
+            response = authorize("kolo", "password", resource.getId(), new String[] {"ScopeA", "ScopeB"});
+        } catch (AuthorizationDeniedException ade) {
+            fail("User should have access to resource from another user");
+        }
+
+        rpt = response.getToken();
+        accessToken = toAccessToken(rpt);
+        authorization = accessToken.getAuthorization();
+        permissions = authorization.getPermissions();
+        assertPermissions(permissions, resource.getName(), "ScopeA", "ScopeB");
+        assertTrue(permissions.isEmpty());
+
+        try {
+            response = authorize("marta", "password", resource.getId(), new String[] {"ScopeB"});
+        } catch (AuthorizationDeniedException ade) {
+            fail("User should have access to his own resources");
+        }
+
+        rpt = response.getToken();
+        accessToken = toAccessToken(rpt);
+        authorization = accessToken.getAuthorization();
+        permissions = authorization.getPermissions();
+        assertPermissions(permissions, resource.getName(), "ScopeB");
+        assertTrue(permissions.isEmpty());
+    }
+
+    /**
+     * Makes sure permissions granted to a typed resource instance does not grant access to resource instances with the same type.
+     *
+     * @throws Exception
+     */
+    @Test
+    public void testOnlyOwnerCanAccessResourceWithType() throws Exception {
+        ResourceRepresentation typedResource = addResource("Typed Resource", getClient(getRealm()).toRepresentation().getId(), false, "ScopeA", "ScopeB");
+
+        typedResource.setType("my:resource");
+
+        getClient(getRealm()).authorization().resources().resource(typedResource.getId()).update(typedResource);
+
+        resource = addResource("Resource A", "marta", true, "ScopeA", "ScopeB");
+
+        resource.setType(typedResource.getType());
+
+        getClient(getRealm()).authorization().resources().resource(resource.getId()).update(resource);
+
+        ResourceRepresentation resourceB = addResource("Resource B", "marta", true, "ScopeA", "ScopeB");
+
+        resourceB.setType(typedResource.getType());
+
+        getClient(getRealm()).authorization().resources().resource(resourceB.getId()).update(resourceB);
+
+        ResourcePermissionRepresentation permission = new ResourcePermissionRepresentation();
+
+        permission.setName(resource.getType() + " Permission");
+        permission.setResourceType(resource.getType());
+        permission.addPolicy("Only Owner Policy");
+
+        getClient(getRealm()).authorization().permissions().resource().create(permission).close();
+
+        AuthorizationResponse response = authorize("marta", "password", resource.getName(), new String[] {"ScopeA", "ScopeB"});
+        String rpt = response.getToken();
+
+        assertNotNull(rpt);
+        assertFalse(response.isUpgraded());
+
+        AccessToken accessToken = toAccessToken(rpt);
+        AccessToken.Authorization authorization = accessToken.getAuthorization();
+
+        assertNotNull(authorization);
+
+        Collection<Permission> permissions = authorization.getPermissions();
+
+        assertNotNull(permissions);
+        assertPermissions(permissions, resource.getName(), "ScopeA", "ScopeB");
+        assertTrue(permissions.isEmpty());
+
+        try {
+            response = authorize("kolo", "password", resource.getId(), new String[] {"ScopeA", "ScopeB"});
+            fail("User should not have access to resource from another user");
+        } catch (AuthorizationDeniedException ade) {
+
+        }
+
+        List<PermissionTicketRepresentation> tickets = getAuthzClient().protection().permission().find(resource.getId(), null, null, null, null, null, null, null);
+
+        for (PermissionTicketRepresentation ticket : tickets) {
+            ticket.setGranted(true);
+            getAuthzClient().protection().permission().update(ticket);
+        }
+
+        try {
+            response = authorize("kolo", "password", resource.getId(), new String[] {"ScopeA", "ScopeB"});
+        } catch (AuthorizationDeniedException ade) {
+            fail("User should have access to resource from another user");
+        }
+
+        permissions = authorization.getPermissions();
+
+        assertNotNull(permissions);
+        assertPermissions(permissions, resource.getName(), "ScopeA", "ScopeB");
+        assertTrue(permissions.isEmpty());
     }
 
     @Test
@@ -120,7 +279,7 @@ public class UserManagedAccessTest extends AbstractResourceServerTest {
 
         assertNotNull(authorization);
 
-        List<Permission> permissions = authorization.getPermissions();
+        Collection<Permission> permissions = authorization.getPermissions();
 
         assertNotNull(permissions);
         assertPermissions(permissions, "Resource A", "ScopeA", "ScopeB");
@@ -128,7 +287,7 @@ public class UserManagedAccessTest extends AbstractResourceServerTest {
 
         try {
             response = authorize("kolo", "password", resource.getId(), new String[] {});
-            fail("User should have access to resource from another user");
+            fail("User should not have access to resource from another user");
         } catch (AuthorizationDeniedException ade) {
 
         }
@@ -175,6 +334,86 @@ public class UserManagedAccessTest extends AbstractResourceServerTest {
     }
 
     @Test
+    public void testUserGrantedAccessConsideredWhenRequestingAuthorizationByResourceName() throws Exception {
+        ResourcePermissionRepresentation permission = new ResourcePermissionRepresentation();
+        resource = addResource("Resource A", "marta", true, "ScopeA", "ScopeB");
+
+        permission.setName(resource.getName() + " Permission");
+        permission.addResource(resource.getId());
+        permission.addPolicy("Only Owner Policy");
+
+        getClient(getRealm()).authorization().permissions().resource().create(permission).close();
+
+        try {
+            AuthorizationResponse response = authorize("kolo", "password", resource.getId(), new String[] {});
+            fail("User should not have access to resource from another user");
+        } catch (AuthorizationDeniedException ade) {
+
+        }
+
+        PermissionResource permissionResource = getAuthzClient().protection().permission();
+        List<PermissionTicketRepresentation> permissionTickets = permissionResource.findByResource(resource.getId());
+
+        assertFalse(permissionTickets.isEmpty());
+        assertEquals(2, permissionTickets.size());
+
+        for (PermissionTicketRepresentation ticket : permissionTickets) {
+            assertFalse(ticket.isGranted());
+
+            ticket.setGranted(true);
+
+            permissionResource.update(ticket);
+        }
+
+        permissionTickets = permissionResource.findByResource(resource.getId());
+
+        assertFalse(permissionTickets.isEmpty());
+        assertEquals(2, permissionTickets.size());
+
+        for (PermissionTicketRepresentation ticket : permissionTickets) {
+            assertTrue(ticket.isGranted());
+        }
+
+        AuthorizationRequest request = new AuthorizationRequest();
+        // No resource id used in request, only name
+        request.addPermission("Resource A", "ScopeA", "ScopeB");
+
+        List<Permission> permissions = authorize("kolo", "password", request);
+
+        assertEquals(1, permissions.size());
+        Permission koloPermission = permissions.get(0);
+        assertEquals("Resource A", koloPermission.getResourceName());
+        assertTrue(koloPermission.getScopes().containsAll(Arrays.asList("ScopeA", "ScopeB")));
+
+        ResourceRepresentation resourceRep = getAuthzClient().protection().resource().findById(resource.getId());
+
+        resourceRep.setName("Resource A Changed");
+
+        getAuthzClient().protection().resource().update(resourceRep);
+
+        request = new AuthorizationRequest();
+        // Try to use the old name
+        request.addPermission("Resource A", "ScopeA", "ScopeB");
+
+        try {
+            authorize("kolo", "password", request);
+            fail("User should not have access to resource from another user");
+        } catch (RuntimeException ade) {
+            assertTrue(ade.getCause().toString().contains("invalid_resource"));
+        }
+
+        request = new AuthorizationRequest();
+        request.addPermission(resourceRep.getName(), "ScopeA", "ScopeB");
+
+        permissions = authorize("kolo", "password", request);
+
+        assertEquals(1, permissions.size());
+        koloPermission = permissions.get(0);
+        assertEquals(resourceRep.getName(), koloPermission.getResourceName());
+        assertTrue(koloPermission.getScopes().containsAll(Arrays.asList("ScopeA", "ScopeB")));
+    }
+
+    @Test
     public void testUserGrantsAccessToResourceWithoutScopes() throws Exception {
         ResourcePermissionRepresentation permission = new ResourcePermissionRepresentation();
         resource = addResource("Resource A", "marta", true);
@@ -196,7 +435,7 @@ public class UserManagedAccessTest extends AbstractResourceServerTest {
 
         assertNotNull(authorization);
 
-        List<Permission> permissions = authorization.getPermissions();
+        Collection<Permission> permissions = authorization.getPermissions();
 
         assertNotNull(permissions);
         assertPermissions(permissions, "Resource A");
@@ -277,7 +516,7 @@ public class UserManagedAccessTest extends AbstractResourceServerTest {
     }
 
     @Test
-    public void testUserGrantsAccessToScope() throws Exception {
+    public void testScopePermissionsToScopeOnly() throws Exception {
         ResourcePermissionRepresentation permission = new ResourcePermissionRepresentation();
         resource = addResource("Resource A", "marta", true, "ScopeA", "ScopeB");
 
@@ -298,7 +537,7 @@ public class UserManagedAccessTest extends AbstractResourceServerTest {
 
         assertNotNull(authorization);
 
-        List<Permission> permissions = authorization.getPermissions();
+        Collection<Permission> permissions = authorization.getPermissions();
 
         assertNotNull(permissions);
         assertPermissions(permissions, "Resource A", "ScopeA", "ScopeB");
@@ -306,7 +545,7 @@ public class UserManagedAccessTest extends AbstractResourceServerTest {
 
         try {
             response = authorize("kolo", "password", resource.getId(), new String[] {"ScopeA"});
-            fail("User should have access to resource from another user");
+            fail("User should not have access to resource from another user");
         } catch (AuthorizationDeniedException ade) {
 
         }
@@ -354,5 +593,48 @@ public class UserManagedAccessTest extends AbstractResourceServerTest {
         }
 
         assertEquals(1, permissionTickets.size());
+    }
+
+    @Test
+    public void testPermissiveModePermissions() throws Exception {
+        resource = addResource("Resource A");
+
+        try {
+            authorize("kolo", "password", resource.getId(), null);
+            fail("Access should be denied, server in enforcing mode");
+        } catch (AuthorizationDeniedException ade) {
+
+        }
+
+        AuthorizationResource authorizationResource = getClient(getRealm()).authorization();
+        ResourceServerRepresentation settings = authorizationResource.getSettings();
+
+        settings.setPolicyEnforcementMode(PolicyEnforcementMode.PERMISSIVE);
+
+        authorizationResource.update(settings);
+
+        AuthorizationResponse response = authorize("marta", "password", "Resource A", null);
+        String rpt = response.getToken();
+
+        assertNotNull(rpt);
+        assertFalse(response.isUpgraded());
+
+        AccessToken accessToken = toAccessToken(rpt);
+        AccessToken.Authorization authorization = accessToken.getAuthorization();
+
+        assertNotNull(authorization);
+
+        Collection<Permission> permissions = authorization.getPermissions();
+
+        assertNotNull(permissions);
+        assertPermissions(permissions, "Resource A");
+        assertTrue(permissions.isEmpty());
+    }
+
+    private List<Permission> authorize(String userName, String password, AuthorizationRequest request) {
+        AuthorizationResponse response = getAuthzClient().authorization(userName, password).authorize(request);
+        AccessToken token = toAccessToken(response.getToken());
+        AccessToken.Authorization authorization = token.getAuthorization();
+        return new ArrayList<>(authorization.getPermissions());
     }
 }

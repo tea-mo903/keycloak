@@ -28,6 +28,8 @@ import org.keycloak.models.utils.ComponentUtil;
 import org.keycloak.models.utils.KeycloakModelUtils;
 
 import javax.persistence.EntityManager;
+import javax.persistence.TypedQuery;
+
 import java.util.*;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -244,6 +246,16 @@ public class RealmAdapter implements RealmModel, JpaModel<RealmEntity> {
     }
 
     @Override
+    public String getDefaultSignatureAlgorithm() {
+        return getAttribute("defaultSignatureAlgorithm");
+    }
+
+    @Override
+    public void setDefaultSignatureAlgorithm(String defaultSignatureAlgorithm) {
+        setAttribute("defaultSignatureAlgorithm", defaultSignatureAlgorithm);
+    }
+
+    @Override
     public boolean isBruteForceProtected() {
         return getAttribute("bruteForceProtected", false);
     }
@@ -455,6 +467,26 @@ public class RealmAdapter implements RealmModel, JpaModel<RealmEntity> {
     }
 
     @Override
+    public int getSsoSessionIdleTimeoutRememberMe() {
+        return realm.getSsoSessionIdleTimeoutRememberMe();
+    }
+
+    @Override
+    public void setSsoSessionIdleTimeoutRememberMe(int seconds){
+        realm.setSsoSessionIdleTimeoutRememberMe(seconds);
+    }
+
+    @Override
+    public int getSsoSessionMaxLifespanRememberMe() {
+        return realm.getSsoSessionMaxLifespanRememberMe();
+    }
+
+    @Override
+    public void setSsoSessionMaxLifespanRememberMe(int seconds) {
+        realm.setSsoSessionMaxLifespanRememberMe(seconds);
+    }
+
+    @Override
     public int getOfflineSessionIdleTimeout() {
         return realm.getOfflineSessionIdleTimeout();
     }
@@ -462,6 +494,27 @@ public class RealmAdapter implements RealmModel, JpaModel<RealmEntity> {
     @Override
     public void setOfflineSessionIdleTimeout(int seconds) {
         realm.setOfflineSessionIdleTimeout(seconds);
+    }
+
+    // KEYCLOAK-7688 Offline Session Max for Offline Token
+    @Override
+    public boolean isOfflineSessionMaxLifespanEnabled() {
+    	return getAttribute(RealmAttributes.OFFLINE_SESSION_MAX_LIFESPAN_ENABLED, false);
+    }
+
+    @Override
+    public void setOfflineSessionMaxLifespanEnabled(boolean offlineSessionMaxLifespanEnabled) {
+    	setAttribute(RealmAttributes.OFFLINE_SESSION_MAX_LIFESPAN_ENABLED, offlineSessionMaxLifespanEnabled);
+    }
+
+    @Override
+    public int getOfflineSessionMaxLifespan() {
+        return getAttribute(RealmAttributes.OFFLINE_SESSION_MAX_LIFESPAN, Constants.DEFAULT_OFFLINE_SESSION_MAX_LIFESPAN);
+    }
+
+    @Override
+    public void setOfflineSessionMaxLifespan(int seconds) {
+        setAttribute(RealmAttributes.OFFLINE_SESSION_MAX_LIFESPAN, seconds);
     }
 
     @Override
@@ -1294,7 +1347,9 @@ public class RealmAdapter implements RealmModel, JpaModel<RealmEntity> {
             entity.setConfig(mapping.getConfig());
         } else {
             entity.getConfig().clear();
-            entity.getConfig().putAll(mapping.getConfig());
+            if (mapping.getConfig() != null) {
+                entity.getConfig().putAll(mapping.getConfig());
+            }
         }
         em.flush();
 
@@ -1609,7 +1664,9 @@ public class RealmAdapter implements RealmModel, JpaModel<RealmEntity> {
             entity.setConfig(model.getConfig());
         } else {
             entity.getConfig().clear();
-            entity.getConfig().putAll(model.getConfig());
+            if (model.getConfig() != null) {
+                entity.getConfig().putAll(model.getConfig());
+            }
         }
         em.flush();
 
@@ -1638,6 +1695,7 @@ public class RealmAdapter implements RealmModel, JpaModel<RealmEntity> {
         auth.setConfig(model.getConfig());
         auth.setEnabled(model.isEnabled());
         auth.setDefaultAction(model.isDefaultAction());
+        auth.setPriority(model.getPriority());
         realm.getRequiredActionProviders().add(auth);
         em.persist(auth);
         em.flush();
@@ -1668,6 +1726,7 @@ public class RealmAdapter implements RealmModel, JpaModel<RealmEntity> {
         model.setAlias(entity.getAlias());
         model.setEnabled(entity.isEnabled());
         model.setDefaultAction(entity.isDefaultAction());
+        model.setPriority(entity.getPriority());
         model.setName(entity.getName());
         Map<String, String> config = new HashMap<>();
         if (entity.getConfig() != null) config.putAll(entity.getConfig());
@@ -1683,12 +1742,15 @@ public class RealmAdapter implements RealmModel, JpaModel<RealmEntity> {
         entity.setProviderId(model.getProviderId());
         entity.setEnabled(model.isEnabled());
         entity.setDefaultAction(model.isDefaultAction());
+        entity.setPriority(model.getPriority());
         entity.setName(model.getName());
         if (entity.getConfig() == null) {
             entity.setConfig(model.getConfig());
         } else {
             entity.getConfig().clear();
-            entity.getConfig().putAll(model.getConfig());
+            if (model.getConfig() != null) {
+                entity.getConfig().putAll(model.getConfig());
+            }
         }
         em.flush();
 
@@ -1702,6 +1764,7 @@ public class RealmAdapter implements RealmModel, JpaModel<RealmEntity> {
         for (RequiredActionProviderEntity entity : entities) {
             actions.add(entityToModel(entity));
         }
+        Collections.sort(actions, RequiredActionProviderModel.RequiredActionComparator.SINGLETON);
         return Collections.unmodifiableList(actions);
     }
 
@@ -1769,60 +1832,64 @@ public class RealmAdapter implements RealmModel, JpaModel<RealmEntity> {
     }
 
     @Override
-    public List<ClientTemplateModel> getClientTemplates() {
-        Collection<ClientTemplateEntity> entities = realm.getClientTemplates();
+    public List<ClientScopeModel> getClientScopes() {
+        Collection<ClientScopeEntity> entities = realm.getClientScopes();
         if (entities == null || entities.isEmpty()) return Collections.EMPTY_LIST;
-        List<ClientTemplateModel> list = new LinkedList<>();
-        for (ClientTemplateEntity entity : entities) {
-            list.add(session.realms().getClientTemplateById(entity.getId(), this));
+        List<ClientScopeModel> list = new LinkedList<>();
+        for (ClientScopeEntity entity : entities) {
+            list.add(session.realms().getClientScopeById(entity.getId(), this));
         }
         return Collections.unmodifiableList(list);
     }
 
     @Override
-    public ClientTemplateModel addClientTemplate(String name) {
-        return this.addClientTemplate(KeycloakModelUtils.generateId(), name);
+    public ClientScopeModel addClientScope(String name) {
+        return this.addClientScope(KeycloakModelUtils.generateId(), name);
     }
 
     @Override
-    public ClientTemplateModel addClientTemplate(String id, String name) {
-        ClientTemplateEntity entity = new ClientTemplateEntity();
+    public ClientScopeModel addClientScope(String id, String name) {
+        ClientScopeEntity entity = new ClientScopeEntity();
         entity.setId(id);
+        name = KeycloakModelUtils.convertClientScopeName(name);
         entity.setName(name);
         entity.setRealm(realm);
-        realm.getClientTemplates().add(entity);
+        realm.getClientScopes().add(entity);
         em.persist(entity);
         em.flush();
-        final ClientTemplateModel resource = new ClientTemplateAdapter(this, em, session, entity);
+        final ClientScopeModel resource = new ClientScopeAdapter(this, em, session, entity);
         em.flush();
         return resource;
     }
 
     @Override
-    public boolean removeClientTemplate(String id) {
+    public boolean removeClientScope(String id) {
         if (id == null) return false;
-        ClientTemplateModel client = getClientTemplateById(id);
-        if (client == null) return false;
-        if (KeycloakModelUtils.isClientTemplateUsed(this, client)) {
-            throw new ModelException("Cannot remove client template, it is currently in use");
+        ClientScopeModel clientScope = getClientScopeById(id);
+        if (clientScope == null) return false;
+        if (KeycloakModelUtils.isClientScopeUsed(this, clientScope)) {
+            throw new ModelException("Cannot remove client scope, it is currently in use");
         }
 
-        ClientTemplateEntity clientEntity = null;
-        Iterator<ClientTemplateEntity> it = realm.getClientTemplates().iterator();
+        ClientScopeEntity clientScopeEntity = null;
+        Iterator<ClientScopeEntity> it = realm.getClientScopes().iterator();
         while (it.hasNext()) {
-            ClientTemplateEntity ae = it.next();
+            ClientScopeEntity ae = it.next();
             if (ae.getId().equals(id)) {
-                clientEntity = ae;
+                clientScopeEntity = ae;
                 it.remove();
                 break;
             }
         }
-        if (client == null) {
+        if (clientScope == null) {
             return false;
         }
-        em.createNamedQuery("deleteTemplateScopeMappingByClient").setParameter("template", clientEntity).executeUpdate();
+
+        session.users().preRemove(clientScope);
+
+        em.createNamedQuery("deleteClientScopeRoleMappingByClientScope").setParameter("clientScope", clientScopeEntity).executeUpdate();
         em.flush();
-        em.remove(clientEntity);
+        em.remove(clientScopeEntity);
         em.flush();
 
 
@@ -1830,8 +1897,44 @@ public class RealmAdapter implements RealmModel, JpaModel<RealmEntity> {
     }
 
     @Override
-    public ClientTemplateModel getClientTemplateById(String id) {
-        return session.realms().getClientTemplateById(id, this);
+    public ClientScopeModel getClientScopeById(String id) {
+        return session.realms().getClientScopeById(id, this);
+    }
+
+    @Override
+    public void addDefaultClientScope(ClientScopeModel clientScope, boolean defaultScope) {
+        DefaultClientScopeRealmMappingEntity entity = new DefaultClientScopeRealmMappingEntity();
+        entity.setClientScope(ClientScopeAdapter.toClientScopeEntity(clientScope, em));
+        entity.setRealm(getEntity());
+        entity.setDefaultScope(defaultScope);
+        em.persist(entity);
+        em.flush();
+        em.detach(entity);
+    }
+
+    @Override
+    public void removeDefaultClientScope(ClientScopeModel clientScope) {
+        int numRemoved = em.createNamedQuery("deleteDefaultClientScopeRealmMapping")
+                .setParameter("clientScope", ClientScopeAdapter.toClientScopeEntity(clientScope, em))
+                .setParameter("realm", getEntity())
+                .executeUpdate();
+        em.flush();
+    }
+
+    @Override
+    public List<ClientScopeModel> getDefaultClientScopes(boolean defaultScope) {
+        TypedQuery<String> query = em.createNamedQuery("defaultClientScopeRealmMappingIdsByRealm", String.class);
+        query.setParameter("realm", getEntity());
+        query.setParameter("defaultScope", defaultScope);
+        List<String> ids = query.getResultList();
+
+        List<ClientScopeModel>  clientScopes = new LinkedList<>();
+        for (String clientScopeId : ids) {
+            ClientScopeModel clientScope = getClientScopeById(clientScopeId);
+            if (clientScope == null) continue;
+            clientScopes.add(clientScope);
+        }
+        return clientScopes;
     }
 
     @Override

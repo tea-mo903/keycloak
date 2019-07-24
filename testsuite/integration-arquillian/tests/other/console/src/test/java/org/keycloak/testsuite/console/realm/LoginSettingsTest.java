@@ -30,6 +30,7 @@ import org.keycloak.testsuite.auth.page.login.VerifyEmail;
 import org.keycloak.testsuite.console.page.realm.LoginSettings;
 import org.keycloak.testsuite.console.page.realm.LoginSettings.RequireSSLOption;
 import org.keycloak.testsuite.util.MailServer;
+import org.keycloak.testsuite.util.URLUtils;
 import org.openqa.selenium.Cookie;
 
 import java.util.HashSet;
@@ -91,8 +92,8 @@ public class LoginSettingsTest extends AbstractRealmTest {
         testRealmAdminConsolePage.navigateTo();
         testRealmLoginPage.form().register();
         assertCurrentUrlStartsWith(testRealmRegistrationPage);
-        testRealmRegistrationPage.waitForConfirmPasswordInputPresent();
-        testRealmRegistrationPage.waitForUsernameInputPresent();
+        assertTrue(testRealmRegistrationPage.isConfirmPasswordPresent());
+        assertTrue(testRealmRegistrationPage.isUsernamePresent());
         log.info("verified registration is enabled");
 
         // test email as username
@@ -107,8 +108,8 @@ public class LoginSettingsTest extends AbstractRealmTest {
         testRealmAdminConsolePage.navigateTo();
         testRealmLoginPage.form().register();
         assertCurrentUrlStartsWith(testRealmRegistrationPage);
-        testRealmRegistrationPage.waitForConfirmPasswordInputPresent();
-        testRealmRegistrationPage.waitForUsernameInputNotPresent();
+        assertTrue(testRealmRegistrationPage.isConfirmPasswordPresent());
+        assertFalse(testRealmRegistrationPage.isUsernamePresent());
         log.info("verified email as username");
 
         // test user reg. disabled
@@ -121,7 +122,7 @@ public class LoginSettingsTest extends AbstractRealmTest {
         log.debug("disabled");
         
         testRealmAdminConsolePage.navigateTo();
-        testRealmLoginPage.form().waitForRegisterLinkNotPresent();
+        assertFalse(testRealmLoginPage.form().isRegisterLinkPresent());
         log.info("verified regisration is disabled");
     }
     
@@ -186,7 +187,7 @@ public class LoginSettingsTest extends AbstractRealmTest {
         log.debug("disabled");
         
         testRealmAdminConsolePage.navigateTo();
-        testRealmLoginPage.form().waitForResetPasswordLinkNotPresent();
+        assertFalse(testRealmLoginPage.form().isForgotPasswordLinkPresent());
         log.info("verified reset password is disabled");
     }
     
@@ -220,8 +221,8 @@ public class LoginSettingsTest extends AbstractRealmTest {
         
         testAccountPage.navigateTo();
         testAccountPage.signOut();
-        testRealmLoginPage.form().waitForLoginButtonPresent();
-        testRealmLoginPage.form().waitForRememberMeNotPresent();
+        assertTrue(testRealmLoginPage.form().isLoginButtonPresent());
+        assertFalse(testRealmLoginPage.form().isRememberMePresent());
         log.info("verified remember me is disabled");
         
     }
@@ -284,7 +285,13 @@ public class LoginSettingsTest extends AbstractRealmTest {
         log.debug("set");
         
         log.info("check HTTPS required");
-        testAccountPage.navigateTo();
+        String accountPageUri = testAccountPage.toString();
+        if (AUTH_SERVER_SSL_REQUIRED) { // quick and dirty (and hopefully provisional) workaround to force HTTP
+            accountPageUri = accountPageUri
+                    .replace("https", "http")
+                    .replace(AUTH_SERVER_PORT, System.getProperty("auth.server.http.port"));
+        }
+        URLUtils.navigateToUri(accountPageUri);
         Assert.assertEquals("HTTPS required", testAccountPage.getErrorMessage());
     }
     

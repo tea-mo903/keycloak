@@ -18,25 +18,30 @@
 package org.keycloak.models.jpa;
 
 import org.keycloak.models.ClientModel;
-import org.keycloak.models.ClientTemplateModel;
+import org.keycloak.models.ClientScopeModel;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.ModelDuplicateException;
 import org.keycloak.models.ProtocolMapperModel;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.RoleContainerModel;
 import org.keycloak.models.RoleModel;
+import org.keycloak.models.jpa.entities.ClientAttributeEntity;
 import org.keycloak.models.jpa.entities.ClientEntity;
-import org.keycloak.models.jpa.entities.ClientTemplateEntity;
+import org.keycloak.models.jpa.entities.ClientScopeClientMappingEntity;
 import org.keycloak.models.jpa.entities.ProtocolMapperEntity;
 import org.keycloak.models.jpa.entities.RoleEntity;
 import org.keycloak.models.utils.KeycloakModelUtils;
+import org.keycloak.protocol.oidc.OIDCLoginProtocol;
 
 import javax.persistence.EntityManager;
+import javax.persistence.TypedQuery;
+
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -295,78 +300,90 @@ public class ClientAdapter implements ClientModel, JpaModel<ClientEntity> {
 
     @Override
     public void setAttribute(String name, String value) {
-        entity.getAttributes().put(name, value);
+        for (ClientAttributeEntity attr : entity.getAttributes()) {
+            if (attr.getName().equals(name)) {
+                attr.setValue(value);
+                return;
+            }
+        }
 
+        ClientAttributeEntity attr = new ClientAttributeEntity();
+        attr.setName(name);
+        attr.setValue(value);
+        attr.setClient(entity);
+        em.persist(attr);
+        entity.getAttributes().add(attr);
     }
 
     @Override
     public void removeAttribute(String name) {
-        entity.getAttributes().remove(name);
+        Iterator<ClientAttributeEntity> it = entity.getAttributes().iterator();
+        while (it.hasNext()) {
+            ClientAttributeEntity attr = it.next();
+            if (attr.getName().equals(name)) {
+                it.remove();
+                em.remove(attr);
+            }
+        }
     }
 
     @Override
     public String getAttribute(String name) {
-        return entity.getAttributes().get(name);
+        return getAttributes().get(name);
     }
 
     @Override
     public Map<String, String> getAttributes() {
-        Map<String, String> copy = new HashMap<>();
-        copy.putAll(entity.getAttributes());
-        return copy;
-    }
-
-    @Override
-    public ClientTemplateModel getClientTemplate() {
-        ClientTemplateEntity templateEntity = entity.getClientTemplate();
-        if (templateEntity == null) return null;
-        return session.realms().getClientTemplateById(templateEntity.getId(), realm);
-    }
-
-    @Override
-    public void setClientTemplate(ClientTemplateModel template) {
-        if (template == null) {
-            entity.setClientTemplate(null);
-
-        } else {
-            ClientTemplateEntity templateEntity = em.getReference(ClientTemplateEntity.class, template.getId());
-            entity.setClientTemplate(templateEntity);
+        Map<String, String> attrs = new HashMap<>();
+        for (ClientAttributeEntity attr : entity.getAttributes()) {
+            attrs.put(attr.getName(), attr.getValue());
         }
-
+        return attrs;
     }
 
     @Override
-    public boolean useTemplateScope() {
-        return entity.isUseTemplateScope();
+    public void addClientScope(ClientScopeModel clientScope, boolean defaultScope) {
+        if (getClientScopes(defaultScope, false).containsKey(clientScope.getName())) return;
+
+        ClientScopeClientMappingEntity entity = new ClientScopeClientMappingEntity();
+        entity.setClientScope(ClientScopeAdapter.toClientScopeEntity(clientScope, em));
+        entity.setClient(getEntity());
+        entity.setDefaultScope(defaultScope);
+        em.persist(entity);
+        em.flush();
+        em.detach(entity);
     }
 
     @Override
-    public void setUseTemplateScope(boolean flag) {
-        entity.setUseTemplateScope(flag);
-
+    public void removeClientScope(ClientScopeModel clientScope) {
+        int numRemoved = em.createNamedQuery("deleteClientScopeClientMapping")
+                .setParameter("clientScope", ClientScopeAdapter.toClientScopeEntity(clientScope, em))
+                .setParameter("client", getEntity())
+                .executeUpdate();
+        em.flush();
     }
 
     @Override
-    public boolean useTemplateMappers() {
-        return entity.isUseTemplateMappers();
+    public Map<String, ClientScopeModel> getClientScopes(boolean defaultScope, boolean filterByProtocol) {
+        TypedQuery<String> query = em.createNamedQuery("clientScopeClientMappingIdsByClient", String.class);
+        query.setParameter("client", getEntity());
+        query.setParameter("defaultScope", defaultScope);
+        List<String> ids = query.getResultList();
+
+        // Defaults to openid-connect
+        String clientProtocol = getProtocol() == null ? OIDCLoginProtocol.LOGIN_PROTOCOL : getProtocol();
+
+        Map<String, ClientScopeModel> clientScopes = new HashMap<>();
+        for (String clientScopeId : ids) {
+            ClientScopeModel clientScope = realm.getClientScopeById(clientScopeId);
+            if (clientScope == null) continue;
+            if (!filterByProtocol || clientScope.getProtocol().equals(clientProtocol)) {
+                clientScopes.put(clientScope.getName(), clientScope);
+            }
+        }
+        return clientScopes;
     }
 
-    @Override
-    public void setUseTemplateMappers(boolean flag) {
-        entity.setUseTemplateMappers(flag);
-
-    }
-
-    @Override
-    public boolean useTemplateConfig() {
-        return entity.isUseTemplateConfig();
-    }
-
-    @Override
-    public void setUseTemplateConfig(boolean flag) {
-        entity.setUseTemplateConfig(flag);
-
-    }
 
     public static boolean contains(String str, String[] array) {
         for (String s : array) {
@@ -384,8 +401,6 @@ public class ClientAdapter implements ClientModel, JpaModel<ClientEntity> {
             mapping.setName(entity.getName());
             mapping.setProtocol(entity.getProtocol());
             mapping.setProtocolMapper(entity.getProtocolMapper());
-            mapping.setConsentRequired(entity.isConsentRequired());
-            mapping.setConsentText(entity.getConsentText());
             Map<String, String> config = new HashMap<String, String>();
             if (entity.getConfig() != null) {
                 config.putAll(entity.getConfig());
@@ -409,8 +424,6 @@ public class ClientAdapter implements ClientModel, JpaModel<ClientEntity> {
         entity.setProtocolMapper(model.getProtocolMapper());
         entity.setClient(this.entity);
         entity.setConfig(model.getConfig());
-        entity.setConsentRequired(model.isConsentRequired());
-        entity.setConsentText(model.getConsentText());
 
         em.persist(entity);
         this.entity.getProtocolMappers().add(entity);
@@ -453,8 +466,6 @@ public class ClientAdapter implements ClientModel, JpaModel<ClientEntity> {
     public void updateProtocolMapper(ProtocolMapperModel mapping) {
         ProtocolMapperEntity entity = getProtocolMapperEntity(mapping.getId());
         entity.setProtocolMapper(mapping.getProtocolMapper());
-        entity.setConsentRequired(mapping.isConsentRequired());
-        entity.setConsentText(mapping.getConsentText());
         if (entity.getConfig() == null) {
             entity.setConfig(mapping.getConfig());
         } else {
@@ -485,8 +496,6 @@ public class ClientAdapter implements ClientModel, JpaModel<ClientEntity> {
         mapping.setName(entity.getName());
         mapping.setProtocol(entity.getProtocol());
         mapping.setProtocolMapper(entity.getProtocolMapper());
-        mapping.setConsentRequired(entity.isConsentRequired());
-        mapping.setConsentText(entity.getConsentText());
         Map<String, String> config = new HashMap<String, String>();
         if (entity.getConfig() != null) config.putAll(entity.getConfig());
         mapping.setConfig(config);

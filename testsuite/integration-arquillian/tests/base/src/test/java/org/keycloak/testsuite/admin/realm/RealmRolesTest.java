@@ -19,13 +19,13 @@ package org.keycloak.testsuite.admin.realm;
 
 import org.junit.Before;
 import org.junit.Test;
-import org.keycloak.admin.client.resource.RealmResource;
 import org.keycloak.admin.client.resource.RoleResource;
 import org.keycloak.admin.client.resource.RolesResource;
 import org.keycloak.admin.client.resource.UserResource;
 import org.keycloak.events.admin.OperationType;
 import org.keycloak.events.admin.ResourceType;
 import org.keycloak.representations.idm.ClientRepresentation;
+import org.keycloak.representations.idm.GroupRepresentation;
 import org.keycloak.representations.idm.RoleRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
 import org.keycloak.testsuite.Assert;
@@ -40,18 +40,22 @@ import javax.ws.rs.core.Response;
 
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsInAnyOrder;
+import static org.hamcrest.Matchers.empty;
+import static org.hamcrest.Matchers.is;
+import static org.hamcrest.collection.IsCollectionWithSize.hasSize;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
-import static org.keycloak.testsuite.Assert.assertNames;
-import static org.keycloak.testsuite.auth.page.AuthRealm.TEST;
 
 /**
  * @author <a href="mailto:sthorger@redhat.com">Stian Thorgersen</a>
@@ -107,7 +111,12 @@ public class RealmRolesTest extends AbstractAdminTest {
         getCleanup().addRoleId(ids.get("role-without-users"));
         getCleanup().addUserId(adminClient.realm(REALM_NAME).users().search(userRep.getUsername()).get(0).getId());
         
-
+        GroupRepresentation groupRep = new GroupRepresentation();
+        groupRep.setName("test-role-group");
+        groupRep.setPath("/test-role-group");
+        adminClient.realm(REALM_NAME).groups().add(groupRep);
+        getCleanup().addGroupId(adminClient.realm(REALM_NAME).groups().groups().get(0).getId());
+        
         resource = adminClient.realm(REALM_NAME).roles();
 
         assertAdminEvents.assertEvent(realmId, OperationType.CREATE, AdminEventPaths.roleResourcePath("role-a"), roleA, ResourceType.REALM_ROLE);
@@ -119,7 +128,7 @@ public class RealmRolesTest extends AbstractAdminTest {
         assertAdminEvents.assertEvent(realmId, OperationType.CREATE, AdminEventPaths.clientRoleResourcePath(clientUuid, "role-c"), roleC, ResourceType.CLIENT_ROLE);
         
         assertAdminEvents.assertEvent(realmId, OperationType.CREATE, AdminEventPaths.userResourcePath(adminClient.realm(REALM_NAME).users().search(userRep.getUsername()).get(0).getId()), userRep, ResourceType.USER);
-        
+        assertAdminEvents.assertEvent(realmId, OperationType.CREATE, AdminEventPaths.groupPath(adminClient.realm(REALM_NAME).groups().groups().get(0).getId()), groupRep, ResourceType.GROUP);
         
     }
 
@@ -218,6 +227,7 @@ public class RealmRolesTest extends AbstractAdminTest {
 
     }
     
+    
     /**
      * KEYCLOAK-2035  Verifies that Role with no users assigned is being properly retrieved without members in API endpoint for role membership
      */
@@ -231,6 +241,41 @@ public class RealmRolesTest extends AbstractAdminTest {
         
     }
     
+    
+    /**
+     * KEYCLOAK-4978 Verifies that Groups assigned to Role are being properly retrieved as members in API endpoint for role membership
+     */
+    @Test
+    public void testGroupsInRole() {   
+        RoleResource role = resource.get("role-with-users");
+
+        List<GroupRepresentation> groups = adminClient.realm(REALM_NAME).groups().groups();
+        GroupRepresentation groupRep = groups.stream().filter(g -> g.getPath().equals("/test-role-group")).findFirst().get();
+        
+        RoleResource roleResource = adminClient.realm(REALM_NAME).roles().get(role.toRepresentation().getName());        
+        List<RoleRepresentation> rolesToAdd = new LinkedList<>();
+        rolesToAdd.add(roleResource.toRepresentation());
+        adminClient.realm(REALM_NAME).groups().group(groupRep.getId()).roles().realmLevel().add(rolesToAdd);
+
+        roleResource = adminClient.realm(REALM_NAME).roles().get(role.toRepresentation().getName());  
+        
+        Set<GroupRepresentation> groupsInRole = roleResource.getRoleGroupMembers();
+        assertTrue(groupsInRole.stream().filter(g -> g.getPath().equals("/test-role-group")).findFirst().isPresent());
+    }
+    
+    /**
+     * KEYCLOAK-4978  Verifies that Role with no users assigned is being properly retrieved without groups in API endpoint for role membership
+     */
+    @Test
+    public void testGroupsNotInRole() {
+        RoleResource role = resource.get("role-without-users");                
+        
+        role = adminClient.realm(REALM_NAME).roles().get(role.toRepresentation().getName());
+        
+        Set<GroupRepresentation> groupsInRole = role.getRoleGroupMembers();
+        assertTrue(groupsInRole.isEmpty());
+    }
+
     /**
      * KEYCLOAK-2035 Verifies that Role Membership is ok after user removal
      */
@@ -257,5 +302,46 @@ public class RealmRolesTest extends AbstractAdminTest {
         assertEquals(0, roleResource.getRoleUserMembers().size());
 
     }
-    
+
+    @Test
+    public void testRoleMembershipWithPagination() {
+        RoleResource role = resource.get("role-with-users");
+
+        // Add a second user
+        UserRepresentation userRep2 = new UserRepresentation();
+        userRep2.setUsername("test-role-member2");
+        userRep2.setEmail("test-role-member2@test-role-member.com");
+        userRep2.setRequiredActions(Collections.<String>emptyList());
+        userRep2.setEnabled(true);
+        adminClient.realm(REALM_NAME).users().create(userRep2);
+
+        List<UserRepresentation> users = adminClient.realm(REALM_NAME).users().search("test-role-member", null, null, null, null, null);
+        assertThat(users, hasSize(2));
+        for (UserRepresentation userRepFromList : users) {
+            UserResource user = adminClient.realm(REALM_NAME).users().get(userRepFromList.getId());
+            UserRepresentation userRep = user.toRepresentation();
+
+            RoleResource roleResource = adminClient.realm(REALM_NAME).roles().get(role.toRepresentation().getName());
+            List<RoleRepresentation> rolesToAdd = new LinkedList<>();
+            rolesToAdd.add(roleResource.toRepresentation());
+            adminClient.realm(REALM_NAME).users().get(userRep.getId()).roles().realmLevel().add(rolesToAdd);
+        }
+
+        RoleResource roleResource = adminClient.realm(REALM_NAME).roles().get(role.toRepresentation().getName());
+        Set<UserRepresentation> roleUserMembers = roleResource.getRoleUserMembers(0, 1);
+
+        Set<String> expectedMembers = new HashSet<>();
+        assertThat(roleUserMembers, hasSize(1));
+        expectedMembers.add(roleUserMembers.iterator().next().getUsername());
+
+        roleUserMembers = roleResource.getRoleUserMembers(1, 1);
+        assertThat(roleUserMembers, hasSize(1));
+        expectedMembers.add(roleUserMembers.iterator().next().getUsername());
+
+        roleUserMembers = roleResource.getRoleUserMembers(2, 1);
+        assertThat(roleUserMembers, is(empty()));
+
+        assertThat(expectedMembers, containsInAnyOrder("test-role-member", "test-role-member2"));
+    }
+
 }

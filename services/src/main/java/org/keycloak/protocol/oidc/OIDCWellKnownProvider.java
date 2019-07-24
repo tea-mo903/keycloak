@@ -20,7 +20,10 @@ package org.keycloak.protocol.oidc;
 import org.keycloak.OAuth2Constants;
 import org.keycloak.authentication.ClientAuthenticator;
 import org.keycloak.authentication.ClientAuthenticatorFactory;
+import org.keycloak.crypto.ClientSignatureVerifierProvider;
+import org.keycloak.crypto.SignatureProvider;
 import org.keycloak.jose.jws.Algorithm;
+import org.keycloak.models.ClientScopeModel;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
 import org.keycloak.protocol.oidc.endpoints.TokenEndpoint;
@@ -36,7 +39,6 @@ import org.keycloak.wellknown.WellKnownProvider;
 
 import javax.ws.rs.core.UriBuilder;
 import javax.ws.rs.core.UriInfo;
-import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
 
@@ -44,12 +46,6 @@ import java.util.List;
  * @author <a href="mailto:sthorger@redhat.com">Stian Thorgersen</a>
  */
 public class OIDCWellKnownProvider implements WellKnownProvider {
-
-    public static final List<String> DEFAULT_ID_TOKEN_SIGNING_ALG_VALUES_SUPPORTED = list(Algorithm.RS256.toString());
-
-    public static final List<String> DEFAULT_USER_INFO_SIGNING_ALG_VALUES_SUPPORTED  = list(Algorithm.RS256.toString());
-
-    public static final List<String> DEFAULT_REQUEST_OBJECT_SIGNING_ALG_VALUES_SUPPORTED  = list(Algorithm.none.toString(), Algorithm.RS256.toString());
 
     public static final List<String> DEFAULT_GRANT_TYPES_SUPPORTED = list(OAuth2Constants.AUTHORIZATION_CODE, OAuth2Constants.IMPLICIT, OAuth2Constants.REFRESH_TOKEN, OAuth2Constants.PASSWORD, OAuth2Constants.CLIENT_CREDENTIALS);
 
@@ -62,12 +58,12 @@ public class OIDCWellKnownProvider implements WellKnownProvider {
     public static final List<String> DEFAULT_CLIENT_AUTH_SIGNING_ALG_VALUES_SUPPORTED = list(Algorithm.RS256.toString());
 
     // The exact list depends on protocolMappers
-    public static final List<String> DEFAULT_CLAIMS_SUPPORTED= list("sub", "iss", IDToken.AUTH_TIME, IDToken.NAME, IDToken.GIVEN_NAME, IDToken.FAMILY_NAME, IDToken.PREFERRED_USERNAME, IDToken.EMAIL);
+    public static final List<String> DEFAULT_CLAIMS_SUPPORTED= list("aud", "sub", "iss", IDToken.AUTH_TIME, IDToken.NAME, IDToken.GIVEN_NAME, IDToken.FAMILY_NAME, IDToken.PREFERRED_USERNAME, IDToken.EMAIL);
 
     public static final List<String> DEFAULT_CLAIM_TYPES_SUPPORTED= list("normal");
 
-    // TODO: Add more of OIDC scopes
-    public static final List<String> SCOPES_SUPPORTED= list(OAuth2Constants.SCOPE_OPENID, OAuth2Constants.OFFLINE_ACCESS);
+    // KEYCLOAK-7451 OAuth Authorization Server Metadata for Proof Key for Code Exchange
+    public static final List<String> DEFAULT_CODE_CHALLENGE_METHODS_SUPPORTED = list(OAuth2Constants.PKCE_METHOD_PLAIN, OAuth2Constants.PKCE_METHOD_S256);
 
     private KeycloakSession session;
 
@@ -93,9 +89,9 @@ public class OIDCWellKnownProvider implements WellKnownProvider {
         config.setCheckSessionIframe(uriBuilder.clone().path(OIDCLoginProtocolService.class, "getLoginStatusIframe").build(realm.getName(), OIDCLoginProtocol.LOGIN_PROTOCOL).toString());
         config.setRegistrationEndpoint(RealmsResource.clientRegistrationUrl(uriInfo).path(ClientRegistrationService.class, "provider").build(realm.getName(), OIDCClientRegistrationProviderFactory.ID).toString());
 
-        config.setIdTokenSigningAlgValuesSupported(DEFAULT_ID_TOKEN_SIGNING_ALG_VALUES_SUPPORTED);
-        config.setUserInfoSigningAlgValuesSupported(DEFAULT_USER_INFO_SIGNING_ALG_VALUES_SUPPORTED);
-        config.setRequestObjectSigningAlgValuesSupported(DEFAULT_REQUEST_OBJECT_SIGNING_ALG_VALUES_SUPPORTED);
+        config.setIdTokenSigningAlgValuesSupported(getSupportedSigningAlgorithms(false));
+        config.setUserInfoSigningAlgValuesSupported(getSupportedSigningAlgorithms(true));
+        config.setRequestObjectSigningAlgValuesSupported(getSupportedClientSigningAlgorithms(true));
         config.setResponseTypesSupported(DEFAULT_RESPONSE_TYPES_SUPPORTED);
         config.setSubjectTypesSupported(DEFAULT_SUBJECT_TYPES_SUPPORTED);
         config.setResponseModesSupported(DEFAULT_RESPONSE_MODES_SUPPORTED);
@@ -108,10 +104,25 @@ public class OIDCWellKnownProvider implements WellKnownProvider {
         config.setClaimTypesSupported(DEFAULT_CLAIM_TYPES_SUPPORTED);
         config.setClaimsParameterSupported(false);
 
-        config.setScopesSupported(SCOPES_SUPPORTED);
+        List<ClientScopeModel> scopes = realm.getClientScopes();
+        List<String> scopeNames = new LinkedList<>();
+        for (ClientScopeModel clientScope : scopes) {
+            if (clientScope.getProtocol().equals(OIDCLoginProtocol.LOGIN_PROTOCOL)) {
+                scopeNames.add(clientScope.getName());
+            }
+        }
+        scopeNames.add(0, OAuth2Constants.SCOPE_OPENID);
+        config.setScopesSupported(scopeNames);
 
         config.setRequestParameterSupported(true);
         config.setRequestUriParameterSupported(true);
+
+        // KEYCLOAK-7451 OAuth Authorization Server Metadata for Proof Key for Code Exchange
+        config.setCodeChallengeMethodsSupported(DEFAULT_CODE_CHALLENGE_METHODS_SUPPORTED);
+
+        // KEYCLOAK-6771 Certificate Bound Token
+        // https://tools.ietf.org/html/draft-ietf-oauth-mtls-08#section-6.2
+        config.setTlsClientCertificateBoundAccessTokens(true);
 
         return config;
     }
@@ -129,7 +140,7 @@ public class OIDCWellKnownProvider implements WellKnownProvider {
     }
 
     private List<String> getClientAuthMethodsSupported() {
-        List<String> result = new ArrayList<>();
+        List<String> result = new LinkedList<>();
 
         List<ProviderFactory> providerFactories = session.getKeycloakSessionFactory().getProviderFactories(ClientAuthenticator.class);
         for (ProviderFactory factory : providerFactories) {
@@ -140,4 +151,25 @@ public class OIDCWellKnownProvider implements WellKnownProvider {
         return result;
     }
 
+    private List<String> getSupportedSigningAlgorithms(boolean includeNone) {
+        List<String> result = new LinkedList<>();
+        for (ProviderFactory s : session.getKeycloakSessionFactory().getProviderFactories(SignatureProvider.class)) {
+            result.add(s.getId());
+        }
+        if (includeNone) {
+            result.add("none");
+        }
+        return result;
+    }
+
+    private List<String> getSupportedClientSigningAlgorithms(boolean includeNone) {
+        List<String> result = new LinkedList<>();
+        for (ProviderFactory s : session.getKeycloakSessionFactory().getProviderFactories(ClientSignatureVerifierProvider.class)) {
+            result.add(s.getId());
+        }
+        if (includeNone) {
+            result.add("none");
+        }
+        return result;
+    }
 }

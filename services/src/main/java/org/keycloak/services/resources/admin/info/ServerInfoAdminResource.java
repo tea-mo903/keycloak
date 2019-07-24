@@ -257,6 +257,7 @@ public class ServerInfoAdminResource {
             rep.setName(mapper.getDisplayType());
             rep.setHelpText(mapper.getHelpText());
             rep.setCategory(mapper.getDisplayCategory());
+            rep.setPriority(mapper.getPriority());
             rep.setProperties(new LinkedList<ConfigPropertyRepresentation>());
             List<ProviderConfigProperty> configProperties = mapper.getConfigProperties();
             rep.setProperties(ModelToRepresentation.toRepresentation(configProperties));
@@ -269,7 +270,7 @@ public class ServerInfoAdminResource {
         for (ProviderFactory p : session.getKeycloakSessionFactory().getProviderFactories(LoginProtocol.class)) {
             LoginProtocolFactory factory = (LoginProtocolFactory)p;
             List<ProtocolMapperRepresentation> mappers = new LinkedList<>();
-            for (ProtocolMapperModel mapper : factory.getBuiltinMappers()) {
+            for (ProtocolMapperModel mapper : factory.getBuiltinMappers().values()) {
                 mappers.add(ModelToRepresentation.toRepresentation(mapper));
             }
             info.getBuiltinProtocolMappers().put(p.getId(), mappers);

@@ -51,6 +51,7 @@ import java.util.Set;
 @NamedQueries({
         @NamedQuery(name="getAllRealmIds", query="select realm.id from RealmEntity realm"),
         @NamedQuery(name="getRealmIdByName", query="select realm.id from RealmEntity realm where realm.name = :name"),
+        @NamedQuery(name="getRealmIdsWithProviderType", query="select distinct c.realm.id from ComponentEntity c where c.providerType = :providerType"),
 })
 public class RealmEntity {
     @Id
@@ -108,6 +109,10 @@ public class RealmEntity {
     private int ssoSessionIdleTimeout;
     @Column(name="SSO_MAX_LIFESPAN")
     private int ssoSessionMaxLifespan;
+    @Column(name="SSO_IDLE_TIMEOUT_REMEMBER_ME")
+    private int ssoSessionIdleTimeoutRememberMe;
+    @Column(name="SSO_MAX_LIFESPAN_REMEMBER_ME")
+    private int ssoSessionMaxLifespanRememberMe;
     @Column(name="OFFLINE_SESSION_IDLE_TIMEOUT")
     private int offlineSessionIdleTimeout;
     @Column(name="ACCESS_TOKEN_LIFESPAN")
@@ -145,7 +150,7 @@ public class RealmEntity {
     Collection<UserFederationMapperEntity> userFederationMappers = new ArrayList<UserFederationMapperEntity>();
 
     @OneToMany(fetch = FetchType.LAZY, cascade ={CascadeType.REMOVE}, orphanRemoval = true, mappedBy = "realm")
-    Collection<ClientTemplateEntity> clientTemplates = new ArrayList<>();
+    Collection<ClientScopeEntity> clientScopes = new ArrayList<>();
 
     @ElementCollection
     @MapKeyColumn(name="NAME")
@@ -367,6 +372,22 @@ public class RealmEntity {
 
     public void setSsoSessionMaxLifespan(int ssoSessionMaxLifespan) {
         this.ssoSessionMaxLifespan = ssoSessionMaxLifespan;
+    }
+
+    public int getSsoSessionIdleTimeoutRememberMe() {
+        return ssoSessionIdleTimeoutRememberMe;
+    }
+
+    public void setSsoSessionIdleTimeoutRememberMe(int ssoSessionIdleTimeoutRememberMe) {
+        this.ssoSessionIdleTimeoutRememberMe = ssoSessionIdleTimeoutRememberMe;
+    }
+
+    public int getSsoSessionMaxLifespanRememberMe() {
+        return ssoSessionMaxLifespanRememberMe;
+    }
+
+    public void setSsoSessionMaxLifespanRememberMe(int ssoSessionMaxLifespanRememberMe) {
+        this.ssoSessionMaxLifespanRememberMe = ssoSessionMaxLifespanRememberMe;
     }
 
     public int getOfflineSessionIdleTimeout() {
@@ -757,12 +778,12 @@ public class RealmEntity {
         return this;
     }
 
-    public Collection<ClientTemplateEntity> getClientTemplates() {
-        return clientTemplates;
+    public Collection<ClientScopeEntity> getClientScopes() {
+        return clientScopes;
     }
 
-    public void setClientTemplates(Collection<ClientTemplateEntity> clientTemplates) {
-        this.clientTemplates = clientTemplates;
+    public void setClientScopes(Collection<ClientScopeEntity> clientScopes) {
+        this.clientScopes = clientScopes;
     }
 
     public void setAllowUserManagedAccess(boolean allowUserManagedAccess) {

@@ -47,46 +47,64 @@ public class MigrationTest extends AbstractMigrationTest {
     public void addTestRealms(List<RealmRepresentation> testRealms) {
         log.info("Adding no test realms for migration test. Test realm should be migrated from previous vesrion.");
     }
+
     @Before
     public void beforeMigrationTest() {
         migrationRealm = adminClient.realms().realm(MIGRATION);
         migrationRealm2 = adminClient.realms().realm(MIGRATION2);
-        migrationRealm3 = adminClient.realms().realm("authorization");
         masterRealm = adminClient.realms().realm(MASTER);
         //add migration realms to testRealmReps to make them removed after test
         addTestRealmToTestRealmReps(migrationRealm);
         addTestRealmToTestRealmReps(migrationRealm2);
-        addTestRealmToTestRealmReps(migrationRealm3);
     }
+
     private void addTestRealmToTestRealmReps(RealmResource realm) {
         try {
             testRealmReps.add(realm.toRepresentation());
-        } catch (NotFoundException ex) {
+        } catch (NotFoundException ignore) {
         }
-    }
-    @Test
-    @Migration(versionFrom = "2.5.5.Final")
-    public void migration2_5_5Test() {
-        testMigratedData();
-        testMigrationTo3_x_and_higher();
-    }
-    @Test
-    @Migration(versionFrom = "1.9.8.Final")
-    public void migration1_9_8Test() throws Exception {
-        testMigratedData();
-        testMigrationTo2_0_0();
-        testMigrationTo2_1_0();
-        testMigrationTo2_2_0();
-        testMigrationTo2_3_0();
-        testMigrationTo2_5_0();
-        testMigrationTo2_5_1();
-        testMigrationTo3_x_and_higher();
     }
 
     @Test
-    @Migration(versionFrom = "2.2.1.Final")
-    public void migrationInAuthorizationServicesTest() {
-        testDroolsToRulesPolicyTypeMigration();
+    @Migration(versionFrom = "4.")
+    public void migration4_xTest() {
+        testMigratedData();
+        testMigrationTo5_x();
+        testMigrationTo6_x();
+        testMigrationTo7_x(true);
+    }
+
+    @Test
+    @Migration(versionFrom = "3.")
+    public void migration3_xTest() {
+        testMigratedData();
+        testMigrationTo4_x();
+        testMigrationTo5_x();
+        testMigrationTo6_x();
+        testMigrationTo7_x(true);
+    }
+
+    @Test
+    @Migration(versionFrom = "2.")
+    public void migration2_xTest() {
+        testMigratedData();
+        testMigrationTo3_x();
+        testMigrationTo4_x();
+        testMigrationTo5_x();
+        testMigrationTo6_x();
+        testMigrationTo7_x(true);
+    }
+
+    @Test
+    @Migration(versionFrom = "1.")
+    public void migration1_xTest() throws Exception {
+        testMigratedData(false);
+        testMigrationTo2_x();
+        testMigrationTo3_x();
+        testMigrationTo4_x(false, false);
+        testMigrationTo5_x();
+        testMigrationTo6_x();
+        testMigrationTo7_x(false);
     }
 
 }

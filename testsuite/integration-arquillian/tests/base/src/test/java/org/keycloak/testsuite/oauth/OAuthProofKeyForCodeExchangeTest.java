@@ -6,18 +6,22 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.keycloak.OAuth2Constants;
 import org.keycloak.OAuthErrorException;
+import org.keycloak.admin.client.resource.ClientResource;
 import org.keycloak.common.util.Base64Url;
 import org.keycloak.events.Details;
 import org.keycloak.events.Errors;
 import org.keycloak.jose.jws.JWSHeader;
 import org.keycloak.jose.jws.JWSInput;
 import org.keycloak.models.utils.KeycloakModelUtils;
+import org.keycloak.protocol.oidc.OIDCAdvancedConfigWrapper;
 import org.keycloak.representations.AccessToken;
 import org.keycloak.representations.RefreshToken;
+import org.keycloak.representations.idm.ClientRepresentation;
 import org.keycloak.representations.idm.EventRepresentation;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.testsuite.AbstractKeycloakTest;
 import org.keycloak.testsuite.AssertEvents;
+import org.keycloak.testsuite.admin.ApiUtil;
 import org.keycloak.testsuite.util.ClientManager;
 import org.keycloak.testsuite.util.OAuthClient;
 import org.keycloak.testsuite.util.UserBuilder;
@@ -425,9 +429,8 @@ public class OAuthProofKeyForCodeExchangeTest extends AbstractKeycloakTest {
         assertNull(header.getContentType());
 
         header = new JWSInput(response.getRefreshToken()).getHeader();
-        assertEquals("RS256", header.getAlgorithm().name());
+        assertEquals("HS256", header.getAlgorithm().name());
         assertEquals("JWT", header.getType());
-        assertEquals(expectedKid, header.getKeyId());
         assertNull(header.getContentType());
 
         AccessToken token = oauth.verifyToken(response.getAccessToken());
@@ -435,7 +438,7 @@ public class OAuthProofKeyForCodeExchangeTest extends AbstractKeycloakTest {
         assertEquals(findUserByUsername(adminClient.realm("test"), "test-user@localhost").getId(), token.getSubject());
         Assert.assertNotEquals("test-user@localhost", token.getSubject());
         assertEquals(sessionId, token.getSessionState());
-        assertEquals(1, token.getRealmAccess().getRoles().size());
+        assertEquals(2, token.getRealmAccess().getRoles().size());
         assertTrue(token.getRealmAccess().isUserInRole("user"));
         assertEquals(1, token.getResourceAccess(oauth.getClientId()).getRoles().size());
         assertTrue(token.getResourceAccess(oauth.getClientId()).isUserInRole("customer-user"));
@@ -443,13 +446,13 @@ public class OAuthProofKeyForCodeExchangeTest extends AbstractKeycloakTest {
         EventRepresentation event = events.expectCodeToToken(codeId, sessionId).assertEvent();
         
         assertEquals(token.getId(), event.getDetails().get(Details.TOKEN_ID));
-        assertEquals(oauth.verifyRefreshToken(response.getRefreshToken()).getId(), event.getDetails().get(Details.REFRESH_TOKEN_ID));
+        assertEquals(oauth.parseRefreshToken(response.getRefreshToken()).getId(), event.getDetails().get(Details.REFRESH_TOKEN_ID));
         assertEquals(sessionId, token.getSessionState());
         
         // make sure PKCE does not affect token refresh on Token Endpoint
         
         String refreshTokenString = response.getRefreshToken();
-        RefreshToken refreshToken = oauth.verifyRefreshToken(refreshTokenString);
+        RefreshToken refreshToken = oauth.parseRefreshToken(refreshTokenString);
 
         Assert.assertNotNull(refreshTokenString);
         Assert.assertThat(token.getExpiration() - getCurrentTime(), allOf(greaterThanOrEqualTo(200), lessThanOrEqualTo(350)));
@@ -462,7 +465,7 @@ public class OAuthProofKeyForCodeExchangeTest extends AbstractKeycloakTest {
         OAuthClient.AccessTokenResponse refreshResponse = oauth.doRefreshTokenRequest(refreshTokenString, "password");
         
         AccessToken refreshedToken = oauth.verifyToken(refreshResponse.getAccessToken());
-        RefreshToken refreshedRefreshToken = oauth.verifyRefreshToken(refreshResponse.getRefreshToken());
+        RefreshToken refreshedRefreshToken = oauth.parseRefreshToken(refreshResponse.getRefreshToken());
 
         assertEquals(200, refreshResponse.getStatusCode());
         assertEquals(sessionId, refreshedToken.getSessionState());
@@ -482,7 +485,7 @@ public class OAuthProofKeyForCodeExchangeTest extends AbstractKeycloakTest {
         assertEquals(findUserByUsername(adminClient.realm("test"), "test-user@localhost").getId(), refreshedToken.getSubject());
         Assert.assertNotEquals("test-user@localhost", refreshedToken.getSubject());
 
-        assertEquals(1, refreshedToken.getRealmAccess().getRoles().size());
+        assertEquals(2, refreshedToken.getRealmAccess().getRoles().size());
         Assert.assertTrue(refreshedToken.getRealmAccess().isUserInRole("user"));
 
         assertEquals(1, refreshedToken.getResourceAccess(oauth.getClientId()).getRoles().size());
@@ -493,5 +496,193 @@ public class OAuthProofKeyForCodeExchangeTest extends AbstractKeycloakTest {
         Assert.assertNotEquals(event.getDetails().get(Details.REFRESH_TOKEN_ID), refreshEvent.getDetails().get(Details.UPDATED_REFRESH_TOKEN_ID));
 
         setTimeOffset(0);
+    }
+
+    // KEYCLOAK-10747 Explicit Proof Key for Code Exchange Activation Settings
+
+    private void setPkceActivationSettings(String clientId, String codeChallengeMethodName) {
+        ClientResource clientResource = ApiUtil.findClientByClientId(adminClient.realm("test"), clientId);
+        ClientRepresentation clientRep = clientResource.toRepresentation();
+        OIDCAdvancedConfigWrapper.fromClientRepresentation(clientRep).setPkceCodeChallengeMethod(codeChallengeMethodName);
+        clientResource.update(clientRep);
+    }
+
+    @Test
+    public void accessTokenRequestValidS256CodeChallengeMethodPkceEnforced() throws Exception {
+        try {
+            setPkceActivationSettings("test-app", OAuth2Constants.PKCE_METHOD_S256);
+            String codeVerifier = "1a345A7890123456r8901c3456789012b45K7890l23"; // 43
+            String codeChallenge = generateS256CodeChallenge(codeVerifier);
+            oauth.codeChallenge(codeChallenge);
+            oauth.codeChallengeMethod(OAuth2Constants.PKCE_METHOD_S256);
+
+            oauth.doLogin("test-user@localhost", "password");
+
+            EventRepresentation loginEvent = events.expectLogin().assertEvent();
+
+            String sessionId = loginEvent.getSessionId();
+            String codeId = loginEvent.getDetails().get(Details.CODE_ID);
+
+            String code = oauth.getCurrentQuery().get(OAuth2Constants.CODE);
+
+            oauth.codeVerifier(codeVerifier);
+
+            expectSuccessfulResponseFromTokenEndpoint(codeId, sessionId, code);
+        } finally {
+            setPkceActivationSettings("test-app", null);
+        }
+    }
+
+    @Test
+    public void accessTokenRequestValidPlainCodeChallengeMethodPkceEnforced() throws Exception {
+        try {
+            setPkceActivationSettings("test-app", OAuth2Constants.PKCE_METHOD_PLAIN);
+            String codeVerifier = "12E45r78901d3456789G12y45G78901234B67v901u3"; // 43
+            String codeChallenge = codeVerifier;
+            oauth.codeChallenge(codeChallenge);
+            oauth.codeChallengeMethod(OAuth2Constants.PKCE_METHOD_PLAIN);
+
+            oauth.doLogin("test-user@localhost", "password");
+
+            EventRepresentation loginEvent = events.expectLogin().assertEvent();
+
+            String sessionId = loginEvent.getSessionId();
+            String codeId = loginEvent.getDetails().get(Details.CODE_ID);
+
+            String code = oauth.getCurrentQuery().get(OAuth2Constants.CODE);
+
+            oauth.codeVerifier(codeVerifier);
+
+            expectSuccessfulResponseFromTokenEndpoint(codeId, sessionId, code);
+        } finally {
+            setPkceActivationSettings("test-app", null);
+        }
+    }
+ 
+    @Test
+    public void accessTokenRequestCodeChallengeMethodMismatchPkceEnforced() throws Exception {
+        try {
+            setPkceActivationSettings("test-app", OAuth2Constants.PKCE_METHOD_S256);
+            String codeVerifier = "12345678e01234567890g2345678h012a4567j90123"; // 43
+            String codeChallenge = generateS256CodeChallenge(codeVerifier);
+            oauth.codeChallenge(codeChallenge);
+            oauth.codeChallengeMethod(OAuth2Constants.PKCE_METHOD_PLAIN);
+
+            UriBuilder b = UriBuilder.fromUri(oauth.getLoginFormUrl());
+
+            driver.navigate().to(b.build().toURL());
+
+            OAuthClient.AuthorizationEndpointResponse errorResponse = new OAuthClient.AuthorizationEndpointResponse(oauth);
+
+            Assert.assertTrue(errorResponse.isRedirected());
+            Assert.assertEquals(errorResponse.getError(), OAuthErrorException.INVALID_REQUEST);
+            Assert.assertEquals(errorResponse.getErrorDescription(), "Invalid parameter: code challenge method is not configured one");
+
+            events.expectLogin().error(Errors.INVALID_REQUEST).user((String) null).session((String) null).clearDetails().assertEvent();
+        } finally {
+            setPkceActivationSettings("test-app", null);
+        }
+    }
+
+    @Test
+    public void accessTokenRequestCodeChallengeMethodMissingPkceEnforced() throws Exception {
+        try {
+            setPkceActivationSettings("test-app", OAuth2Constants.PKCE_METHOD_S256);
+            String codeVerifier = "1234567890123456789012345678901234567890123"; // 43
+            String codeChallenge = generateS256CodeChallenge(codeVerifier);
+            oauth.codeChallenge(codeChallenge);
+
+            UriBuilder b = UriBuilder.fromUri(oauth.getLoginFormUrl());
+
+            driver.navigate().to(b.build().toURL());
+
+            OAuthClient.AuthorizationEndpointResponse errorResponse = new OAuthClient.AuthorizationEndpointResponse(oauth);
+
+            Assert.assertTrue(errorResponse.isRedirected());
+            Assert.assertEquals(errorResponse.getError(), OAuthErrorException.INVALID_REQUEST);
+            Assert.assertEquals(errorResponse.getErrorDescription(), "Missing parameter: code_challenge_method");
+
+            events.expectLogin().error(Errors.INVALID_REQUEST).user((String) null).session((String) null).clearDetails().assertEvent();
+
+        } finally {
+            setPkceActivationSettings("test-app", null);
+        }
+    }
+
+    @Test
+    public void accessTokenRequestCodeChallengeMissingPkceEnforced() throws Exception {
+        try {
+            setPkceActivationSettings("test-app", OAuth2Constants.PKCE_METHOD_S256);
+            oauth.codeChallengeMethod(OAuth2Constants.PKCE_METHOD_S256);
+
+            UriBuilder b = UriBuilder.fromUri(oauth.getLoginFormUrl());
+
+            driver.navigate().to(b.build().toURL());
+
+            OAuthClient.AuthorizationEndpointResponse errorResponse = new OAuthClient.AuthorizationEndpointResponse(oauth);
+
+            Assert.assertTrue(errorResponse.isRedirected());
+            Assert.assertEquals(errorResponse.getError(), OAuthErrorException.INVALID_REQUEST);
+            Assert.assertEquals(errorResponse.getErrorDescription(), "Missing parameter: code_challenge");
+
+            events.expectLogin().error(Errors.INVALID_REQUEST).user((String) null).session((String) null).clearDetails().assertEvent();
+
+        } finally {
+            setPkceActivationSettings("test-app", null);
+        }
+    }
+
+    @Test
+    public void accessTokenRequestInvalidCodeChallengePkceEnforced() throws Exception {
+        try {
+            setPkceActivationSettings("test-app", OAuth2Constants.PKCE_METHOD_S256);
+            oauth.codeChallenge("invalid");
+            oauth.codeChallengeMethod(OAuth2Constants.PKCE_METHOD_S256);
+
+            UriBuilder b = UriBuilder.fromUri(oauth.getLoginFormUrl());
+
+            driver.navigate().to(b.build().toURL());
+
+            OAuthClient.AuthorizationEndpointResponse errorResponse = new OAuthClient.AuthorizationEndpointResponse(oauth);
+
+            Assert.assertTrue(errorResponse.isRedirected());
+            Assert.assertEquals(errorResponse.getError(), OAuthErrorException.INVALID_REQUEST);
+            Assert.assertEquals(errorResponse.getErrorDescription(), "Invalid parameter: code_challenge");
+
+            events.expectLogin().error(Errors.INVALID_REQUEST).user((String) null).session((String) null).clearDetails().assertEvent();
+
+        } finally {
+            setPkceActivationSettings("test-app", null);
+        }
+    }
+
+    @Test
+    public void accessTokenRequestWithoutCodeVerifierPkceEnforced() throws Exception {
+        try {
+            setPkceActivationSettings("test-app", OAuth2Constants.PKCE_METHOD_S256);
+            String codeVerifier = "1234567890123456789012345678901234567890123";
+            String codeChallenge = generateS256CodeChallenge(codeVerifier);
+            oauth.codeChallenge(codeChallenge);
+            oauth.codeChallengeMethod(OAuth2Constants.PKCE_METHOD_S256);
+
+            oauth.doLogin("test-user@localhost", "password");
+
+            EventRepresentation loginEvent = events.expectLogin().assertEvent();
+
+            String sessionId = loginEvent.getSessionId();
+            String codeId = loginEvent.getDetails().get(Details.CODE_ID);
+
+            String code = oauth.getCurrentQuery().get(OAuth2Constants.CODE);
+
+            OAuthClient.AccessTokenResponse response = oauth.doAccessTokenRequest(code, "password");
+
+            assertEquals(400, response.getStatusCode());
+            assertEquals(OAuthErrorException.INVALID_GRANT, response.getError());
+            assertEquals("PKCE code verifier not specified", response.getErrorDescription());
+
+            events.expectCodeToToken(codeId, sessionId).error(Errors.CODE_VERIFIER_MISSING).clearDetails().assertEvent();
+        } finally {
+            setPkceActivationSettings("test-app", null);
+        }
     }
 }

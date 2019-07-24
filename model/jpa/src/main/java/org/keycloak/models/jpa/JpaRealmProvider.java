@@ -23,7 +23,7 @@ import org.keycloak.connections.jpa.util.JpaUtils;
 import org.keycloak.migration.MigrationModel;
 import org.keycloak.models.ClientInitialAccessModel;
 import org.keycloak.models.ClientModel;
-import org.keycloak.models.ClientTemplateModel;
+import org.keycloak.models.ClientScopeModel;
 import org.keycloak.models.GroupModel;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.ModelDuplicateException;
@@ -33,7 +33,7 @@ import org.keycloak.models.RoleContainerModel;
 import org.keycloak.models.RoleModel;
 import org.keycloak.models.jpa.entities.ClientEntity;
 import org.keycloak.models.jpa.entities.ClientInitialAccessEntity;
-import org.keycloak.models.jpa.entities.ClientTemplateEntity;
+import org.keycloak.models.jpa.entities.ClientScopeEntity;
 import org.keycloak.models.jpa.entities.GroupEntity;
 import org.keycloak.models.jpa.entities.RealmEntity;
 import org.keycloak.models.jpa.entities.RoleEntity;
@@ -81,6 +81,10 @@ public class JpaRealmProvider implements RealmProvider {
             public RealmModel getCreatedRealm() {
                 return adapter;
             }
+            @Override
+            public KeycloakSession getKeycloakSession() {
+            	return session;
+            }
         });
         return adapter;
     }
@@ -92,10 +96,21 @@ public class JpaRealmProvider implements RealmProvider {
         RealmAdapter adapter = new RealmAdapter(session, em, realm);
         return adapter;
     }
+    
+    @Override
+    public List<RealmModel> getRealmsWithProviderType(Class<?> providerType) {
+        TypedQuery<String> query = em.createNamedQuery("getRealmIdsWithProviderType", String.class);
+        query.setParameter("providerType", providerType.getName());
+        return getRealms(query);
+    }
 
     @Override
     public List<RealmModel> getRealms() {
         TypedQuery<String> query = em.createNamedQuery("getAllRealmIds", String.class);
+        return getRealms(query);
+    }
+
+    private List<RealmModel> getRealms(TypedQuery<String> query) {
         List<String> entities = query.getResultList();
         List<RealmModel> realms = new ArrayList<RealmModel>();
         for (String id : entities) {
@@ -142,8 +157,11 @@ public class JpaRealmProvider implements RealmProvider {
             removeClient(client, adapter);
         }
 
-        for (ClientTemplateEntity a : new LinkedList<>(realm.getClientTemplates())) {
-            adapter.removeClientTemplate(a.getId());
+        num = em.createNamedQuery("deleteDefaultClientScopeRealmMappingByRealm")
+                .setParameter("realm", realm).executeUpdate();
+
+        for (ClientScopeEntity a : new LinkedList<>(realm.getClientScopes())) {
+            adapter.removeClientScope(a.getId());
         }
 
         for (RoleModel role : adapter.getRoles()) {
@@ -285,7 +303,7 @@ public class JpaRealmProvider implements RealmProvider {
         String compositeRoleTable = JpaUtils.getTableNameForNativeQuery("COMPOSITE_ROLE", em);
         em.createNativeQuery("delete from " + compositeRoleTable + " where CHILD_ROLE = :role").setParameter("role", roleEntity).executeUpdate();
         realm.getClients().forEach(c -> c.deleteScopeMapping(role));
-        em.createNamedQuery("deleteTemplateScopeMappingByRole").setParameter("role", roleEntity).executeUpdate();
+        em.createNamedQuery("deleteClientScopeRoleMappingByRole").setParameter("role", roleEntity).executeUpdate();
         int val = em.createNamedQuery("deleteGroupRoleMappingsByRole").setParameter("roleId", roleEntity.getId()).executeUpdate();
 
         em.flush();
@@ -366,6 +384,25 @@ public class JpaRealmProvider implements RealmProvider {
     @Override
     public Long getGroupsCountByNameContaining(RealmModel realm, String search) {
         return (long) searchForGroupByName(realm, search, null, null).size();
+    }
+    
+    @Override
+    public List<GroupModel> getGroupsByRole(RealmModel realm, RoleModel role, int firstResult, int maxResults) {
+        TypedQuery<GroupEntity> query = em.createNamedQuery("groupsInRole", GroupEntity.class);
+        query.setParameter("roleId", role.getId());
+        if (firstResult != -1) {
+            query.setFirstResult(firstResult);
+        }
+        if (maxResults != -1) {
+            query.setMaxResults(maxResults);
+        }
+        List<GroupEntity> results = query.getResultList();
+
+        return results.stream()
+        		.map(g -> new GroupAdapter(realm, em, g))
+                .sorted(Comparator.comparing(GroupModel::getName))
+                .collect(Collectors.collectingAndThen(
+                        Collectors.toList(), Collections::unmodifiableList));
     }
 
     @Override
@@ -567,6 +604,9 @@ public class JpaRealmProvider implements RealmProvider {
             }
         });
 
+        int countRemoved = em.createNamedQuery("deleteClientScopeClientMappingByClient")
+                .setParameter("client", clientEntity)
+                .executeUpdate();
         em.remove(clientEntity);  // i have no idea why, but this needs to come before deleteScopeMapping
 
         try {
@@ -580,12 +620,12 @@ public class JpaRealmProvider implements RealmProvider {
     }
 
     @Override
-    public ClientTemplateModel getClientTemplateById(String id, RealmModel realm) {
-        ClientTemplateEntity app = em.find(ClientTemplateEntity.class, id);
+    public ClientScopeModel getClientScopeById(String id, RealmModel realm) {
+        ClientScopeEntity app = em.find(ClientScopeEntity.class, id);
 
         // Check if application belongs to this realm
         if (app == null || !realm.getId().equals(app.getRealm().getId())) return null;
-        ClientTemplateAdapter adapter = new ClientTemplateAdapter(realm, em, session, app);
+        ClientScopeAdapter adapter = new ClientScopeAdapter(realm, em, session, app);
         return adapter;
     }
 

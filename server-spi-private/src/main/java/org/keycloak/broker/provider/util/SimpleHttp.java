@@ -27,8 +27,10 @@ import org.apache.http.HttpResponse;
 import org.apache.http.NameValuePair;
 import org.apache.http.client.HttpClient;
 import org.apache.http.client.entity.UrlEncodedFormEntity;
+import org.apache.http.client.methods.HttpEntityEnclosingRequestBase;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.methods.HttpPut;
 import org.apache.http.client.methods.HttpRequestBase;
 import org.apache.http.client.utils.URIBuilder;
 import org.apache.http.entity.StringEntity;
@@ -48,6 +50,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.zip.GZIPInputStream;
+import org.apache.http.client.methods.HttpDelete;
 
 /**
  * @author <a href="mailto:sthorger@redhat.com">Stian Thorgersen</a>
@@ -72,6 +75,14 @@ public class SimpleHttp {
         this.method = method;
     }
 
+    public static SimpleHttp doDelete(String url, KeycloakSession session) {
+        return doDelete(url, session.getProvider(HttpClientProvider.class).getHttpClient());
+    }
+
+    public static SimpleHttp doDelete(String url, HttpClient client) {
+        return new SimpleHttp(url, "DELETE", client);
+    }
+
     public static SimpleHttp doGet(String url, KeycloakSession session) {
         return doGet(url, session.getProvider(HttpClientProvider.class).getHttpClient());
     }
@@ -86,6 +97,10 @@ public class SimpleHttp {
 
     public static SimpleHttp doPost(String url, HttpClient client) {
         return new SimpleHttp(url, "POST", client);
+    }
+
+    public static SimpleHttp doPut(String url, HttpClient client) {
+        return new SimpleHttp(url, "PUT", client);
     }
 
     public SimpleHttp header(String name, String value) {
@@ -157,20 +172,31 @@ public class SimpleHttp {
     private Response makeRequest() throws IOException {
         boolean get = method.equals("GET");
         boolean post = method.equals("POST");
+        boolean put = method.equals("PUT");
+        boolean delete = method.equals("DELETE");
 
         HttpRequestBase httpRequest = new HttpPost(url);
+        
         if (get) {
             httpRequest = new HttpGet(appendParameterToUrl(url));
         }
 
-        if (post) {
+        if (delete) {
+            httpRequest = new HttpDelete(appendParameterToUrl(url));
+        }
+
+        if (put) {
+            httpRequest = new HttpPut(appendParameterToUrl(url));
+        }
+
+        if (post || put) {
             if (params != null) {
-                ((HttpPost) httpRequest).setEntity(getFormEntityFromParameter());
+                ((HttpEntityEnclosingRequestBase) httpRequest).setEntity(getFormEntityFromParameter());
             } else if (entity != null) {
                 if (headers == null || !headers.containsKey("Content-Type")) {
                     header("Content-Type", "application/json");
                 }
-                ((HttpPost) httpRequest).setEntity(getJsonEntity());
+                ((HttpEntityEnclosingRequestBase) httpRequest).setEntity(getJsonEntity());
             } else {
                 throw new IllegalStateException("No content set");
             }
@@ -286,6 +312,11 @@ public class SimpleHttp {
         public String asString() throws IOException {
             readResponse();
             return responseString;
+        }
+
+        public String getFirstHeader(String name) throws IOException {
+            readResponse();
+            return response.getHeaders(name)[0].getValue();
         }
 
         public void close() throws IOException {

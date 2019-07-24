@@ -24,7 +24,7 @@ import org.keycloak.exportimport.util.ImportUtils;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.testsuite.arquillian.DeploymentTargetModifier;
 import org.keycloak.testsuite.runonserver.RunOnServerDeployment;
-import org.keycloak.testsuite.util.IOUtil;
+import org.keycloak.testsuite.utils.io.IOUtil;
 import org.keycloak.util.JsonSerialization;
 
 import java.io.IOException;
@@ -63,7 +63,12 @@ public class JsonFileImport255MigrationTest extends AbstractJsonFileImportMigrat
 
     @Test
     public void migration2_5_5Test() throws Exception {
-        testMigrationTo3_x_and_higher();
+        checkRealmsImported();
+        testMigrationTo3_x();
+        testMigrationTo4_x(true, false);
+        testMigrationTo5_x();
+        testMigrationTo6_x();
+        testMigrationTo7_x(true);
     }
 
- }
+}

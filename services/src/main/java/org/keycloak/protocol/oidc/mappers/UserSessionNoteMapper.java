@@ -19,6 +19,7 @@ package org.keycloak.protocol.oidc.mappers;
 
 import org.keycloak.models.ProtocolMapperModel;
 import org.keycloak.models.UserSessionModel;
+import org.keycloak.models.UserSessionNoteDescriptor;
 import org.keycloak.protocol.ProtocolMapperUtils;
 import org.keycloak.protocol.oidc.OIDCLoginProtocol;
 import org.keycloak.provider.ProviderConfigProperty;
@@ -87,14 +88,11 @@ public class UserSessionNoteMapper extends AbstractOIDCProtocolMapper implements
     public static ProtocolMapperModel createClaimMapper(String name,
                                                         String userSessionNote,
                                                         String tokenClaimName, String jsonType,
-                                                        boolean consentRequired, String consentText,
                                                         boolean accessToken, boolean idToken) {
         ProtocolMapperModel mapper = new ProtocolMapperModel();
         mapper.setName(name);
         mapper.setProtocolMapper(PROVIDER_ID);
         mapper.setProtocol(OIDCLoginProtocol.LOGIN_PROTOCOL);
-        mapper.setConsentRequired(consentRequired);
-        mapper.setConsentText(consentText);
         Map<String, String> config = new HashMap<String, String>();
         config.put(ProtocolMapperUtils.USER_SESSION_NOTE, userSessionNote);
         config.put(OIDCAttributeMapperHelper.TOKEN_CLAIM_NAME, tokenClaimName);
@@ -104,4 +102,20 @@ public class UserSessionNoteMapper extends AbstractOIDCProtocolMapper implements
         mapper.setConfig(config);
         return mapper;
     }
+
+    /**
+     * For session notes defined using a {@link UserSessionNoteDescriptor} enum
+     *
+     * @param userSessionNoteDescriptor User session note descriptor for which to create a protocol mapper model.
+     */
+    public static ProtocolMapperModel createUserSessionNoteMapper(UserSessionNoteDescriptor userSessionNoteDescriptor) {
+        return UserSessionNoteMapper.createClaimMapper(
+                userSessionNoteDescriptor.getDisplayName(),
+                userSessionNoteDescriptor.toString(),
+                userSessionNoteDescriptor.getTokenClaim(),
+                "String",
+                true, true
+        );
+    }
+
 }

@@ -28,6 +28,7 @@ import org.keycloak.authorization.store.StoreFactory;
 import org.keycloak.events.admin.OperationType;
 import org.keycloak.events.admin.ResourceType;
 import org.keycloak.models.Constants;
+import org.keycloak.models.KeycloakSession;
 import org.keycloak.representations.idm.authorization.PolicyRepresentation;
 import org.keycloak.representations.idm.authorization.ResourceRepresentation;
 import org.keycloak.representations.idm.authorization.ScopeRepresentation;
@@ -44,11 +45,9 @@ import javax.ws.rs.Path;
 import javax.ws.rs.PathParam;
 import javax.ws.rs.Produces;
 import javax.ws.rs.QueryParam;
-import javax.ws.rs.core.Context;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.Response.Status;
-import javax.ws.rs.core.UriInfo;
 
 import java.util.Arrays;
 import java.util.HashMap;
@@ -67,9 +66,11 @@ public class ScopeService {
     private final AuthorizationProvider authorization;
     private final AdminPermissionEvaluator auth;
     private final AdminEventBuilder adminEvent;
+    private KeycloakSession session;
     private ResourceServer resourceServer;
 
-    public ScopeService(ResourceServer resourceServer, AuthorizationProvider authorization, AdminPermissionEvaluator auth, AdminEventBuilder adminEvent) {
+    public ScopeService(KeycloakSession session, ResourceServer resourceServer, AuthorizationProvider authorization, AdminPermissionEvaluator auth, AdminEventBuilder adminEvent) {
+        this.session = session;
         this.resourceServer = resourceServer;
         this.authorization = authorization;
         this.auth = auth;
@@ -80,13 +81,13 @@ public class ScopeService {
     @NoCache
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
-    public Response create(@Context UriInfo uriInfo,  ScopeRepresentation scope) {
+    public Response create(ScopeRepresentation scope) {
             this.auth.realm().requireManageAuthorization();
         Scope model = toModel(scope, this.resourceServer, authorization);
 
         scope.setId(model.getId());
 
-        audit(uriInfo, scope, scope.getId(), OperationType.CREATE);
+        audit(scope, scope.getId(), OperationType.CREATE);
 
         return Response.status(Status.CREATED).entity(scope).build();
     }
@@ -95,7 +96,7 @@ public class ScopeService {
     @PUT
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
-    public Response update(@Context UriInfo uriInfo, @PathParam("id") String id, ScopeRepresentation scope) {
+    public Response update(@PathParam("id") String id, ScopeRepresentation scope) {
             this.auth.realm().requireManageAuthorization();
         scope.setId(id);
         StoreFactory storeFactory = authorization.getStoreFactory();
@@ -107,14 +108,14 @@ public class ScopeService {
 
         toModel(scope, resourceServer, authorization);
 
-        audit(uriInfo, scope, OperationType.UPDATE);
+        audit(scope, OperationType.UPDATE);
 
         return Response.noContent().build();
     }
 
     @Path("{id}")
     @DELETE
-    public Response delete(@Context UriInfo uriInfo, @PathParam("id") String id) {
+    public Response delete(@PathParam("id") String id) {
         this.auth.realm().requireManageAuthorization();
         StoreFactory storeFactory = authorization.getStoreFactory();
         List<Resource> resources = storeFactory.getResourceStore().findByScope(Arrays.asList(id), resourceServer.getId());
@@ -143,7 +144,7 @@ public class ScopeService {
         storeFactory.getScopeStore().delete(id);
 
         if (authorization.getRealm().isAdminEventsEnabled()) {
-            audit(uriInfo, toRepresentation(scope), OperationType.DELETE);
+            audit(toRepresentation(scope), OperationType.DELETE);
         }
 
         return Response.noContent().build();
@@ -260,16 +261,16 @@ public class ScopeService {
                 .build();
     }
 
-    private void audit(@Context UriInfo uriInfo, ScopeRepresentation resource, OperationType operation) {
-        audit(uriInfo, resource, null, operation);
+    private void audit(ScopeRepresentation resource, OperationType operation) {
+        audit(resource, null, operation);
     }
 
-    private void audit(@Context UriInfo uriInfo, ScopeRepresentation resource, String id, OperationType operation) {
+    private void audit(ScopeRepresentation resource, String id, OperationType operation) {
         if (authorization.getRealm().isAdminEventsEnabled()) {
             if (id != null) {
-                adminEvent.operation(operation).resourcePath(uriInfo, id).representation(resource).success();
+                adminEvent.operation(operation).resourcePath(session.getContext().getUri(), id).representation(resource).success();
             } else {
-                adminEvent.operation(operation).resourcePath(uriInfo).representation(resource).success();
+                adminEvent.operation(operation).resourcePath(session.getContext().getUri()).representation(resource).success();
             }
         }
     }

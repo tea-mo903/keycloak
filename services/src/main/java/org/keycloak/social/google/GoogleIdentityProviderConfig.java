@@ -16,7 +16,6 @@
  */
 package org.keycloak.social.google;
 
-import org.keycloak.broker.oidc.OAuth2IdentityProviderConfig;
 import org.keycloak.broker.oidc.OIDCIdentityProviderConfig;
 import org.keycloak.models.IdentityProviderModel;
 
@@ -38,4 +37,22 @@ public class GoogleIdentityProviderConfig extends OIDCIdentityProviderConfig {
         getConfig().put("userIp", String.valueOf(ip));
     }
 
+    public String getHostedDomain() {
+        String hostedDomain = getConfig().get("hostedDomain");
+
+        return hostedDomain == null || hostedDomain.isEmpty() ? null : hostedDomain;
+    }
+
+    public void setHostedDomain(final String hostedDomain) {
+        getConfig().put("hostedDomain", hostedDomain);
+    }
+
+    public boolean isOfflineAccess() {
+        String offlineAccess = getConfig().get("offlineAccess");
+        return offlineAccess == null ? false : Boolean.valueOf(offlineAccess);
+    }
+    
+    public void setOfflineAccess(boolean offlineAccess) {
+        getConfig().put("offlineAccess", String.valueOf(offlineAccess));
+    }
 }

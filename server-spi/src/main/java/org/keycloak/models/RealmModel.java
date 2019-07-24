@@ -34,6 +34,7 @@ import java.util.*;
 public interface RealmModel extends RoleContainerModel {
     interface RealmCreationEvent extends ProviderEvent {
         RealmModel getCreatedRealm();
+        KeycloakSession getKeycloakSession();
     }
 
     interface RealmPostCreateEvent extends ProviderEvent {
@@ -162,6 +163,9 @@ public interface RealmModel extends RoleContainerModel {
 
     void setResetPasswordAllowed(boolean resetPasswordAllowed);
 
+    String getDefaultSignatureAlgorithm();
+    void setDefaultSignatureAlgorithm(String defaultSignatureAlgorithm);
+
     boolean isRevokeRefreshToken();
     void setRevokeRefreshToken(boolean revokeRefreshToken);
 
@@ -174,10 +178,23 @@ public interface RealmModel extends RoleContainerModel {
     int getSsoSessionMaxLifespan();
     void setSsoSessionMaxLifespan(int seconds);
 
+    int getSsoSessionIdleTimeoutRememberMe();
+    void setSsoSessionIdleTimeoutRememberMe(int seconds);
+
+    int getSsoSessionMaxLifespanRememberMe();
+    void setSsoSessionMaxLifespanRememberMe(int seconds);
+
     int getOfflineSessionIdleTimeout();
     void setOfflineSessionIdleTimeout(int seconds);
 
     int getAccessTokenLifespan();
+
+    // KEYCLOAK-7688 Offline Session Max for Offline Token
+    boolean isOfflineSessionMaxLifespanEnabled();
+    void setOfflineSessionMaxLifespanEnabled(boolean offlineSessionMaxLifespanEnabled);
+
+    int getOfflineSessionMaxLifespan();
+    void setOfflineSessionMaxLifespan(int seconds);
 
     void setAccessTokenLifespan(int seconds);
 
@@ -437,14 +454,18 @@ public interface RealmModel extends RoleContainerModel {
     boolean removeGroup(GroupModel group);
     void moveGroup(GroupModel group, GroupModel toParent);
 
-    List<ClientTemplateModel> getClientTemplates();
+    List<ClientScopeModel> getClientScopes();
 
-    ClientTemplateModel addClientTemplate(String name);
+    ClientScopeModel addClientScope(String name);
 
-    ClientTemplateModel addClientTemplate(String id, String name);
+    ClientScopeModel addClientScope(String id, String name);
 
-    boolean removeClientTemplate(String id);
+    boolean removeClientScope(String id);
 
-    ClientTemplateModel getClientTemplateById(String id);
+    ClientScopeModel getClientScopeById(String id);
+
+    void addDefaultClientScope(ClientScopeModel clientScope, boolean defaultScope);
+    void removeDefaultClientScope(ClientScopeModel clientScope);
+    List<ClientScopeModel> getDefaultClientScopes(boolean defaultScope);
 
 }

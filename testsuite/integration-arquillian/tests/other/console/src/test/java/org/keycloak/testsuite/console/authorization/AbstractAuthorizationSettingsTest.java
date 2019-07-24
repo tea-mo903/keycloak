@@ -22,12 +22,11 @@ import static org.keycloak.testsuite.auth.page.login.Login.OIDC;
 
 import org.jboss.arquillian.graphene.page.Page;
 import org.junit.Before;
-import org.junit.BeforeClass;
 import org.keycloak.representations.idm.ClientRepresentation;
-import org.keycloak.testsuite.ProfileAssume;
 import org.keycloak.testsuite.console.clients.AbstractClientTest;
 import org.keycloak.testsuite.console.page.clients.authorization.Authorization;
 import org.keycloak.testsuite.console.page.clients.settings.ClientSettings;
+import org.keycloak.testsuite.console.page.clients.settings.ClientSettingsForm;
 import org.openqa.selenium.By;
 
 /**
@@ -43,11 +42,6 @@ public abstract class AbstractAuthorizationSettingsTest extends AbstractClientTe
 
     protected ClientRepresentation newClient;
 
-    @BeforeClass
-    public static void enabled() {
-        ProfileAssume.assumePreview();
-    }
-
     @Before
     public void configureTest() {
         this.newClient = createResourceServer();
@@ -61,6 +55,7 @@ public abstract class AbstractAuthorizationSettingsTest extends AbstractClientTe
         newClient.setRedirectUris(TEST_REDIRECT_URIs);
         newClient.setAuthorizationServicesEnabled(true);
 
+        clientSettingsPage.form().setAccessType(ClientSettingsForm.OidcAccessType.CONFIDENTIAL);
         clientSettingsPage.form().setRedirectUris(TEST_REDIRECT_URIs);
         clientSettingsPage.form().setAuthorizationSettingsEnabled(true);
         clientSettingsPage.form().save();

@@ -35,8 +35,8 @@ import static org.hamcrest.CoreMatchers.not;
 import static org.hamcrest.Matchers.containsString;
 import static org.junit.Assert.assertThat;
 import static org.keycloak.testsuite.saml.AbstractSamlTest.REALM_NAME;
-import static org.keycloak.testsuite.util.IOUtil.documentToString;
-import static org.keycloak.testsuite.util.IOUtil.setDocElementAttributeValue;
+import static org.keycloak.testsuite.utils.io.IOUtil.documentToString;
+import static org.keycloak.testsuite.utils.io.IOUtil.setDocElementAttributeValue;
 import static org.keycloak.testsuite.util.Matchers.statusCodeIsHC;
 
 /**
@@ -156,7 +156,7 @@ public class BasicSamlTest extends AbstractSamlTest {
 
     @Test
     public void testExplicitPortInDestination() throws Exception {
-        testWithOverriddenPort(Integer.valueOf(System.getProperty("auth.server.http.port")), Response.Status.OK, containsString("login"));
+        testWithOverriddenPort(Integer.valueOf(AUTH_SERVER_PORT), Response.Status.OK, containsString("login"));
     }
 
     @Test

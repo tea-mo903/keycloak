@@ -20,6 +20,7 @@ import static org.junit.Assert.assertEquals;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
@@ -31,10 +32,7 @@ import org.keycloak.admin.client.resource.ClientResource;
 import org.keycloak.admin.client.resource.ClientsResource;
 import org.keycloak.admin.client.resource.RealmResource;
 import org.keycloak.authorization.client.AuthzClient;
-import org.keycloak.authorization.client.Configuration;
 import org.keycloak.authorization.client.resource.ProtectionResource;
-import org.keycloak.jose.jws.JWSInput;
-import org.keycloak.representations.AccessToken;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.representations.idm.authorization.AuthorizationRequest;
 import org.keycloak.representations.idm.authorization.AuthorizationResponse;
@@ -42,18 +40,16 @@ import org.keycloak.representations.idm.authorization.Permission;
 import org.keycloak.representations.idm.authorization.PermissionRequest;
 import org.keycloak.representations.idm.authorization.ResourceOwnerRepresentation;
 import org.keycloak.representations.idm.authorization.ResourceRepresentation;
-import org.keycloak.testsuite.AbstractKeycloakTest;
 import org.keycloak.testsuite.util.ClientBuilder;
 import org.keycloak.testsuite.util.RealmBuilder;
 import org.keycloak.testsuite.util.RoleBuilder;
 import org.keycloak.testsuite.util.RolesBuilder;
 import org.keycloak.testsuite.util.UserBuilder;
-import org.keycloak.util.JsonSerialization;
 
 /**
  * @author <a href="mailto:psilva@redhat.com">Pedro Igor</a>
  */
-public abstract class AbstractResourceServerTest extends AbstractKeycloakTest {
+public abstract class AbstractResourceServerTest extends AbstractAuthzTest {
 
     protected static final String REALM_NAME = "authz-test";
 
@@ -67,15 +63,19 @@ public abstract class AbstractResourceServerTest extends AbstractKeycloakTest {
                 .user(UserBuilder.create().username("marta").password("password")
                         .addRoles("uma_authorization", "uma_protection")
                         .role("resource-server-test", "uma_protection"))
+                .user(UserBuilder.create().username("alice").password("password")
+                        .addRoles("uma_authorization", "uma_protection")
+                        .role("resource-server-test", "uma_protection"))
                 .user(UserBuilder.create().username("kolo").password("password"))
                 .client(ClientBuilder.create().clientId("resource-server-test")
                         .secret("secret")
                         .authorizationServicesEnabled(true)
                         .redirectUris("http://localhost/resource-server-test")
                         .defaultRoles("uma_protection")
-                        .directAccessGrants())
+                        .directAccessGrants()
+                        .serviceAccountsEnabled(true))
                 .client(ClientBuilder.create().clientId("test-app")
-                        .redirectUris("http://localhost:8180/auth/realms/master/app/auth")
+                        .redirectUris("http://localhost:8180/auth/realms/master/app/auth", "https://localhost:8543/auth/realms/master/app/auth")
                         .publicClient())
                 .build());
     }
@@ -155,7 +155,7 @@ public abstract class AbstractResourceServerTest extends AbstractKeycloakTest {
         return authorization.authorize(authorizationRequest);
     }
 
-    protected RealmResource getRealm() throws Exception {
+    protected RealmResource getRealm() {
         return adminClient.realm("authz-test");
     }
 
@@ -166,23 +166,19 @@ public abstract class AbstractResourceServerTest extends AbstractKeycloakTest {
 
     protected AuthzClient getAuthzClient() {
         try {
-            return AuthzClient.create(JsonSerialization.readValue(getClass().getResourceAsStream("/authorization-test/default-keycloak-uma2.json"), Configuration.class));
+            return AuthzClient.create(httpsAwareConfigurationStream(getClass().getResourceAsStream("/authorization-test/default-keycloak-uma2.json")));
         } catch (IOException cause) {
             throw new RuntimeException("Failed to create authz client", cause);
         }
     }
 
-    protected AccessToken toAccessToken(String rpt) throws Exception {
-        return JsonSerialization.readValue(new JWSInput(rpt).getContent(), AccessToken.class);
-    }
-
-    protected void assertPermissions(List<Permission> permissions, String expectedResource, String... expectedScopes) {
+    protected void assertPermissions(Collection<Permission> permissions, String expectedResource, String... expectedScopes) {
         Iterator<Permission> iterator = permissions.iterator();
 
         while (iterator.hasNext()) {
             Permission permission = iterator.next();
 
-            if (permission.getResourceName().equalsIgnoreCase(expectedResource)) {
+            if (permission.getResourceName().equalsIgnoreCase(expectedResource) || permission.getResourceId().equals(expectedResource)) {
                 Set<String> scopes = permission.getScopes();
 
                 assertEquals(expectedScopes.length, scopes.size());

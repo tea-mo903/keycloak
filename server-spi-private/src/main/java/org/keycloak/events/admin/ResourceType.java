@@ -141,7 +141,7 @@ public enum ResourceType {
     /**
      *
      */
-    , CLIENT_TEMPLATE
+    , CLIENT_SCOPE
 
     /**
      *
@@ -176,5 +176,10 @@ public enum ResourceType {
     /**
      *
      */
-    , AUTHORIZATION_POLICY;
+    , AUTHORIZATION_POLICY
+
+    /**
+     *
+     */
+    , CUSTOM;
 }

@@ -23,7 +23,9 @@ import org.keycloak.broker.oidc.OIDCIdentityProvider;
 import org.keycloak.broker.provider.AbstractIdentityProviderMapper;
 import org.keycloak.broker.provider.BrokeredIdentityContext;
 import org.keycloak.models.IdentityProviderMapperModel;
+import org.keycloak.protocol.oidc.mappers.OIDCAttributeMapperHelper;
 import org.keycloak.representations.JsonWebToken;
+import org.keycloak.util.JsonSerialization;
 
 import java.util.List;
 import java.util.Map;
@@ -37,13 +39,16 @@ public abstract class AbstractClaimMapper extends AbstractIdentityProviderMapper
     public static final String CLAIM_VALUE = "claim.value";
 
     public static Object getClaimValue(JsonWebToken token, String claim) {
-        String[] split = claim.split("\\.");
+        List<String> split = OIDCAttributeMapperHelper.splitClaimPath(claim);
         Map<String, Object> jsonObject = token.getOtherClaims();
-        for (int i = 0; i < split.length; i++) {
-            if (i == split.length - 1) {
-                return jsonObject.get(split[i]);
+        final int length = split.size();
+        int i = 0;
+        for (String component : split) {
+            i++;
+            if (i == length) {
+                return jsonObject.get(component);
             } else {
-                Object val = jsonObject.get(split[i]);
+                Object val = jsonObject.get(component);
                 if (!(val instanceof Map)) return null;
                 jsonObject = (Map<String, Object>)val;
             }
@@ -114,6 +119,11 @@ public abstract class AbstractClaimMapper extends AbstractIdentityProviderMapper
             List list = (List)value;
             for (Object val : list) {
             	if (valueEquals(desiredValue, val)) return true;
+            }
+        } else if (value instanceof JsonNode) {
+            try {
+                if (JsonSerialization.readValue(desiredValue, JsonNode.class).equals(value)) return true;
+            } catch (Exception ignore) {
             }
         }
         return false;

@@ -60,8 +60,10 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.hamcrest.Matchers.containsInAnyOrder;
+import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasEntry;
+import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.Assert.assertEquals;
@@ -247,37 +249,37 @@ public class IdentityProviderTest extends AbstractAdminTest {
         create(createRep("google", "google"));
         provider = realm.identityProviders().get("google");
         mapperTypes = provider.getMapperTypes();
-        assertMapperTypes(mapperTypes, "google-user-attribute-mapper");
+        assertMapperTypes(mapperTypes, "google-user-attribute-mapper", "oidc-username-idp-mapper");
 
         create(createRep("facebook", "facebook"));
         provider = realm.identityProviders().get("facebook");
         mapperTypes = provider.getMapperTypes();
-        assertMapperTypes(mapperTypes, "facebook-user-attribute-mapper");
+        assertMapperTypes(mapperTypes, "facebook-user-attribute-mapper", "oidc-username-idp-mapper");
 
         create(createRep("github", "github"));
         provider = realm.identityProviders().get("github");
         mapperTypes = provider.getMapperTypes();
-        assertMapperTypes(mapperTypes, "github-user-attribute-mapper");
+        assertMapperTypes(mapperTypes, "github-user-attribute-mapper", "oidc-username-idp-mapper");
 
         create(createRep("twitter", "twitter"));
         provider = realm.identityProviders().get("twitter");
         mapperTypes = provider.getMapperTypes();
-        assertMapperTypes(mapperTypes);
+        assertMapperTypes(mapperTypes, "oidc-username-idp-mapper");
 
         create(createRep("linkedin", "linkedin"));
         provider = realm.identityProviders().get("linkedin");
         mapperTypes = provider.getMapperTypes();
-        assertMapperTypes(mapperTypes, "linkedin-user-attribute-mapper");
+        assertMapperTypes(mapperTypes, "linkedin-user-attribute-mapper", "oidc-username-idp-mapper");
 
         create(createRep("microsoft", "microsoft"));
         provider = realm.identityProviders().get("microsoft");
         mapperTypes = provider.getMapperTypes();
-        assertMapperTypes(mapperTypes, "microsoft-user-attribute-mapper");
+        assertMapperTypes(mapperTypes, "microsoft-user-attribute-mapper", "oidc-username-idp-mapper");
 
         create(createRep("stackoverflow", "stackoverflow"));
         provider = realm.identityProviders().get("stackoverflow");
         mapperTypes = provider.getMapperTypes();
-        assertMapperTypes(mapperTypes, "stackoverflow-user-attribute-mapper");
+        assertMapperTypes(mapperTypes, "stackoverflow-user-attribute-mapper", "oidc-username-idp-mapper");
 
         create(createRep("keycloak-oidc", "keycloak-oidc"));
         provider = realm.identityProviders().get("keycloak-oidc");
@@ -485,6 +487,38 @@ public class IdentityProviderTest extends AbstractAdminTest {
         assertEquals("offline_access", mappers.get(0).getConfig().get("role"));
     }
 
+    // KEYCLOAK-7872
+    @Test
+    public void testDeleteProtocolMappersAfterDeleteIdentityProvider() {
+        create(createRep("google3", "google"));
+
+        IdentityProviderResource provider = realm.identityProviders().get("google3");
+
+        IdentityProviderMapperRepresentation mapper = new IdentityProviderMapperRepresentation();
+        mapper.setIdentityProviderAlias("google3");
+        mapper.setName("my_mapper");
+        mapper.setIdentityProviderMapper("oidc-hardcoded-role-idp-mapper");
+        Map<String, String> config = new HashMap<>();
+        config.put("role", "offline_access");
+        mapper.setConfig(config);
+
+        Response response = provider.addMapper(mapper);
+
+        List<IdentityProviderMapperRepresentation> mappers = provider.getMappers();
+        assertThat(mappers, hasSize(1));
+
+        assertAdminEvents.clear();
+
+        provider.remove();
+        assertAdminEvents.assertEvent(realmId, OperationType.DELETE, AdminEventPaths.identityProviderPath("google3"), ResourceType.IDENTITY_PROVIDER);
+
+        create(createRep("google3", "google"));
+
+        IdentityProviderResource newProvider = realm.identityProviders().get("google3");
+
+        assertThat(newProvider.getMappers(), empty());
+    }
+
     @Test
     public void testInstalledIdentityProviders() {
         Response response = realm.identityProviders().getIdentityProviders("oidc");
@@ -604,7 +638,7 @@ public class IdentityProviderTest extends AbstractAdminTest {
         Assert.assertEquals("Parsed export type", EntityDescriptorType.class, entBody.getClass());
         EntityDescriptorType entity = (EntityDescriptorType) entBody;
 
-        Assert.assertEquals("EntityID", "http://localhost:8180/auth/realms/admin-client-test", entity.getEntityID());
+        Assert.assertEquals("EntityID", oauth.AUTH_SERVER_ROOT + "/realms/admin-client-test", entity.getEntityID());
 
         Assert.assertNotNull("ChoiceType not null", entity.getChoiceType());
         Assert.assertEquals("ChoiceType.size", 1, entity.getChoiceType().size());
@@ -633,7 +667,7 @@ public class IdentityProviderTest extends AbstractAdminTest {
         IndexedEndpointType endpoint = desc.getAssertionConsumerService().get(0);
 
         Assert.assertEquals("AssertionConsumerService.Location",
-                new URI("http://localhost:8180/auth/realms/admin-client-test/broker/saml/endpoint"), endpoint.getLocation());
+                new URI(oauth.AUTH_SERVER_ROOT + "/realms/admin-client-test/broker/saml/endpoint"), endpoint.getLocation());
         Assert.assertEquals("AssertionConsumerService.Binding",
                 new URI("urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"), endpoint.getBinding());
         Assert.assertTrue("AssertionConsumerService.isDefault", endpoint.isIsDefault());
@@ -645,7 +679,7 @@ public class IdentityProviderTest extends AbstractAdminTest {
         EndpointType sloEndpoint = desc.getSingleLogoutService().get(0);
 
         Assert.assertEquals("SingleLogoutService.Location",
-                new URI("http://localhost:8180/auth/realms/admin-client-test/broker/saml/endpoint"), sloEndpoint.getLocation());
+                new URI(oauth.AUTH_SERVER_ROOT + "/realms/admin-client-test/broker/saml/endpoint"), sloEndpoint.getLocation());
         Assert.assertEquals("SingleLogoutService.Binding",
                 new URI("urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"), sloEndpoint.getBinding());
 

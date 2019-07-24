@@ -198,6 +198,16 @@ public class RealmBuilder {
         return this;
     }
 
+    public RealmBuilder ssoSessionIdleTimeoutRememberMe(int ssoSessionIdleTimeoutRememberMe){
+        rep.setSsoSessionIdleTimeoutRememberMe(ssoSessionIdleTimeoutRememberMe);
+        return this;
+    }
+
+    public RealmBuilder ssoSessionMaxLifespanRememberMe(int ssoSessionMaxLifespanRememberMe){
+        rep.setSsoSessionMaxLifespanRememberMe(ssoSessionMaxLifespanRememberMe);
+        return this;
+    }
+
     public RealmBuilder accessCodeLifespanUserAction(int accessCodeLifespanUserAction) {
         rep.setAccessCodeLifespanUserAction(accessCodeLifespanUserAction);
         return this;
@@ -223,6 +233,22 @@ public class RealmBuilder {
             rep.setGroups(new ArrayList<>());
         }
         rep.getGroups().add(group);
+        return this;
+    }
+
+    // KEYCLOAK-7688 Offline Session Max for Offline Token
+    public RealmBuilder offlineSessionIdleTimeout(int offlineSessionIdleTimeout) {
+        rep.setOfflineSessionIdleTimeout(offlineSessionIdleTimeout);
+        return this;
+    }
+
+    public RealmBuilder offlineSessionMaxLifespan(int offlineSessionMaxLifespan) {
+        rep.setOfflineSessionMaxLifespan(offlineSessionMaxLifespan);
+        return this;
+    }
+
+    public RealmBuilder offlineSessionMaxLifespanEnabled(boolean offlineSessionMaxLifespanEnabled) {
+        rep.setOfflineSessionMaxLifespanEnabled(offlineSessionMaxLifespanEnabled);
         return this;
     }
 }

@@ -38,7 +38,10 @@ import java.io.File;
 import java.net.URL;
 import java.util.*;
 
+import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.is;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertThat;
 import static org.keycloak.testsuite.admin.AbstractAdminTest.loadJson;
 
 /**
@@ -69,6 +72,16 @@ public class ExportImportTest extends AbstractKeycloakTest {
         RealmRepresentation testRealm2 = loadJson(getClass().getResourceAsStream("/model/testrealm.json"), RealmRepresentation.class);
         testRealm2.setId("test-realm");
         testRealms.add(testRealm2);
+    }
+
+    @Override
+    protected boolean isImportAfterEachMethod() {
+        return true;
+    }
+
+    @Override
+    public void beforeAbstractKeycloakTestRealmImport() {
+        removeAllRealmsDespiteMaster();
     }
 
     private void setEventsConfig(RealmRepresentation realm) {
@@ -174,20 +187,35 @@ public class ExportImportTest extends AbstractKeycloakTest {
         // import a realm with clients without roles
         importRealmFromFile("/import/partial-import.json");
         Assert.assertTrue("Imported realm hasn't been found!", isRealmPresent("partial-import"));
+        addTestRealmToTestRealmReps("partial-import");
 
         // import a realm with clients without roles
         importRealmFromFile("/import/import-without-roles.json");
         Assert.assertTrue("Imported realm hasn't been found!", isRealmPresent("import-without-roles"));
+        addTestRealmToTestRealmReps("import-without-roles");
 
         // import a realm with roles without clients
         importRealmFromFile("/import/import-without-clients.json");
         Assert.assertTrue("Imported realm hasn't been found!", isRealmPresent("import-without-clients"));
+        addTestRealmToTestRealmReps("import-without-clients");
     }
 
     private boolean isRealmPresent(String realmId) {
         return adminClient.realms().findAll().stream().filter(realm -> realmId.equals(realm.getId())).findFirst().isPresent();
     }
-    
+
+    /*
+     * non-JavaDoc
+     *
+     * Adds a testTealm to TestContext.testRealmReps (which are after testClass removed)
+     * 
+     * It prevents from affecting other tests. (auth-server-undertow)
+     * 
+     */
+    private void addTestRealmToTestRealmReps(String realm) {
+        testContext.addTestRealmToTestRealmReps(adminClient.realms().realm(realm).toRepresentation());
+    }
+
     private void testFullExportImport() throws LifecycleException {
         testingClient.testing().exportImport().setAction(ExportImportConfig.ACTION_EXPORT);
         testingClient.testing().exportImport().setRealmName("");
@@ -197,6 +225,12 @@ public class ExportImportTest extends AbstractKeycloakTest {
         removeRealm("test");
         removeRealm("test-realm");
         Assert.assertNames(adminClient.realms().findAll(), "master");
+
+        Map<String, RequiredActionProviderRepresentation> requiredActionsBeforeImport = new HashMap<>();
+        adminClient.realm("master").flows().getRequiredActions().stream()
+                .forEach(action -> {
+                    requiredActionsBeforeImport.put(action.getAlias(), action);
+                });
 
         assertNotAuthenticated("test", "test-user@localhost", "password");
         assertNotAuthenticated("test", "user1", "password");
@@ -218,6 +252,17 @@ public class ExportImportTest extends AbstractKeycloakTest {
 
         // KEYCLOAK-6050 Check SMTP password is exported/imported
         assertEquals("secret", testingClient.server("test").fetch(RunHelpers.internalRealm()).getSmtpServer().get("password"));
+
+        // KEYCLOAK-8176 Check required actions are exported/imported properly
+        List<RequiredActionProviderRepresentation> requiredActionsAfterImport = adminClient.realm("master").flows().getRequiredActions();
+        assertThat(requiredActionsAfterImport.size(), is(equalTo(requiredActionsBeforeImport.size())));
+        requiredActionsAfterImport.stream()
+                .forEach((action) -> {
+                    RequiredActionProviderRepresentation beforeImportAction = requiredActionsBeforeImport.get(action.getAlias());
+                    assertThat(action.getName(), is(equalTo(beforeImportAction.getName())));
+                    assertThat(action.getProviderId(), is(equalTo(beforeImportAction.getProviderId())));
+                    assertThat(action.getPriority(), is(equalTo(beforeImportAction.getPriority())));
+                });
     }
 
     private void testRealmExportImport() throws LifecycleException {
@@ -229,6 +274,7 @@ public class ExportImportTest extends AbstractKeycloakTest {
         List<ComponentRepresentation> components = adminClient.realm("test").components().query();
         KeysMetadataRepresentation keyMetadata = adminClient.realm("test").keys().getKeyMetadata();
         String sampleRealmRoleId = adminClient.realm("test").roles().get("sample-realm-role").toRepresentation().getId();
+        Map<String, List<String>> roleAttributes = adminClient.realm("test").roles().get("attribute-role").toRepresentation().getAttributes();
         String testAppId = adminClient.realm("test").clients().findByClientId("test-app").get(0).getId();
         String sampleClientRoleId = adminClient.realm("test").clients().get(testAppId).roles().get("sample-client-role").toRepresentation().getId();
 
@@ -263,6 +309,9 @@ public class ExportImportTest extends AbstractKeycloakTest {
 
         String importedSampleRealmRoleId = adminClient.realm("test").roles().get("sample-realm-role").toRepresentation().getId();
         assertEquals(sampleRealmRoleId, importedSampleRealmRoleId);
+
+        Map<String, List<String>> importedRoleAttributes = adminClient.realm("test").roles().get("attribute-role").toRepresentation().getAttributes();
+        Assert.assertRoleAttributes(roleAttributes, importedRoleAttributes);
 
         String importedSampleClientRoleId = adminClient.realm("test").clients().get(testAppId).roles().get("sample-client-role").toRepresentation().getId();
         assertEquals(sampleClientRoleId, importedSampleClientRoleId);
@@ -311,7 +360,7 @@ public class ExportImportTest extends AbstractKeycloakTest {
     private void clearExportImportProperties() {
         // Clear export/import properties after test
         Properties systemProps = System.getProperties();
-        Set<String> propsToRemove = new HashSet<String>();
+        Set<String> propsToRemove = new HashSet<>();
 
         for (Object key : systemProps.keySet()) {
             if (key.toString().startsWith(ExportImportConfig.PREFIX)) {

@@ -19,6 +19,7 @@ package org.keycloak.testsuite;
 import org.jboss.arquillian.graphene.page.Page;
 import org.junit.Before;
 import org.keycloak.admin.client.resource.RealmResource;
+import org.keycloak.admin.client.resource.UserResource;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
 import org.keycloak.testsuite.admin.ApiUtil;
@@ -87,32 +88,36 @@ public abstract class AbstractAuthTest extends AbstractKeycloakTest {
         bburkeUser = createUserRepresentation("bburke", "bburke@redhat.com", "Bill", "Burke", true);
         setPasswordFor(bburkeUser, PASSWORD);
 
-        deleteAllCookiesForTestRealm();
+        resetTestRealmSession();
     }
 
 
     public void createTestUserWithAdminClient() {
+        createTestUserWithAdminClient(true);
+    }
+
+    public void createTestUserWithAdminClient(boolean setRealmRoles) {
         ApiUtil.removeUserByUsername(testRealmResource(), "test");
 
         log.debug("creating test user");
         String id = createUserAndResetPasswordWithAdminClient(testRealmResource(), testUser, PASSWORD);
         testUser.setId(id);
 
-        assignClientRoles(testRealmResource(), id, "realm-management", "view-realm");
+        if (setRealmRoles) {
+            assignClientRoles(testRealmResource(), id, "realm-management", "view-realm");
+        }
     }
 
-    public static UserRepresentation createUserRepresentation(String username, String email, String firstName, String lastName, boolean enabled) {
-        UserRepresentation user = new UserRepresentation();
-        user.setUsername(username);
-        user.setEmail(email);
-        user.setFirstName(firstName);
-        user.setLastName(lastName);
-        user.setEnabled(enabled);
-        return user;
-    }
-
-    public void deleteAllCookiesForTestRealm() {
+    protected void deleteAllCookiesForTestRealm() {
         deleteAllCookiesForRealm(testRealmAccountPage);
+    }
+
+    protected void deleteAllSessionsInTestRealm() {
+        deleteAllSessionsInRealm(testRealmAccountPage.getAuthRealm());
+    }
+
+    protected void resetTestRealmSession() {
+        resetRealmSession(testRealmAccountPage.getAuthRealm());
     }
 
     public void listCookies() {
@@ -125,6 +130,10 @@ public abstract class AbstractAuthTest extends AbstractKeycloakTest {
 
     public RealmResource testRealmResource() {
         return adminClient.realm(testRealmPage.getAuthRealm());
+    }
+
+    protected UserResource testUserResource() {
+        return testRealmResource().users().get(testUser.getId());
     }
 
 }

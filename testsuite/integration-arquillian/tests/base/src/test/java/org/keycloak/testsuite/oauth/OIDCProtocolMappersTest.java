@@ -22,15 +22,23 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.keycloak.admin.client.resource.ClientResource;
+import org.keycloak.admin.client.resource.ClientScopeResource;
 import org.keycloak.admin.client.resource.ProtocolMappersResource;
+import org.keycloak.admin.client.resource.RealmResource;
 import org.keycloak.admin.client.resource.UserResource;
 import org.keycloak.common.util.UriUtils;
+import org.keycloak.jose.jws.JWSInput;
+import org.keycloak.models.AccountRoles;
 import org.keycloak.protocol.oidc.OIDCLoginProtocol;
+import org.keycloak.protocol.oidc.OIDCLoginProtocolFactory;
 import org.keycloak.protocol.oidc.mappers.AddressMapper;
+import org.keycloak.protocol.oidc.mappers.OIDCAttributeMapperHelper;
 import org.keycloak.representations.AccessToken;
 import org.keycloak.representations.AddressClaimSet;
 import org.keycloak.representations.IDToken;
 import org.keycloak.representations.idm.ClientRepresentation;
+import org.keycloak.representations.idm.ClientScopeRepresentation;
+import org.keycloak.representations.idm.GroupRepresentation;
 import org.keycloak.representations.idm.ProtocolMapperRepresentation;
 import org.keycloak.representations.idm.RealmRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
@@ -43,7 +51,11 @@ import org.keycloak.testsuite.util.OAuthClient;
 import org.keycloak.testsuite.util.ProtocolMapperUtil;
 
 import javax.ws.rs.core.Response;
+
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -78,12 +90,6 @@ public class OIDCProtocolMappersTest extends AbstractKeycloakTest {
     @Rule
     public AssertEvents events = new AssertEvents(this);
 
-
-    @Override
-    public void beforeAbstractKeycloakTest() throws Exception {
-        super.beforeAbstractKeycloakTest();
-    }
-
     @Before
     public void clientConfiguration() {
         ClientManager.realm(adminClient.realm("test")).clientId("test-app").directAccessGrant(true);
@@ -99,10 +105,19 @@ public class OIDCProtocolMappersTest extends AbstractKeycloakTest {
 
     private void deleteMappers(ProtocolMappersResource protocolMappers) {
         ProtocolMapperRepresentation mapper = ProtocolMapperUtil.getMapperByNameAndProtocol(protocolMappers, OIDCLoginProtocol.LOGIN_PROTOCOL, "Realm roles mapper");
-        protocolMappers.delete(mapper.getId());
+        if (mapper != null) {
+            protocolMappers.delete(mapper.getId());
+        }
 
         mapper = ProtocolMapperUtil.getMapperByNameAndProtocol(protocolMappers, OIDCLoginProtocol.LOGIN_PROTOCOL, "Client roles mapper");
-        protocolMappers.delete(mapper.getId());
+        if (mapper != null) {
+            protocolMappers.delete(mapper.getId());
+        }
+
+        mapper = ProtocolMapperUtil.getMapperByNameAndProtocol(protocolMappers, OIDCLoginProtocol.LOGIN_PROTOCOL, "group-value");
+        if (mapper != null) {
+            protocolMappers.delete(mapper.getId());
+        }
     }
 
     @Override
@@ -125,6 +140,8 @@ public class OIDCProtocolMappersTest extends AbstractKeycloakTest {
             user.singleAttribute("country", "USA");
             user.singleAttribute("formatted", "6 Foo Street");
             user.singleAttribute("phone", "617-777-6666");
+            user.singleAttribute("json-attribute", "{\"a\": 1, \"b\": 2, \"c\": [{\"a\": 1, \"b\": 2}], \"d\": {\"a\": 1, \"b\": 2}}");
+            user.getAttributes().put("json-attribute-multi", Arrays.asList("{\"a\": 1, \"b\": 2, \"c\": [{\"a\": 1, \"b\": 2}], \"d\": {\"a\": 1, \"b\": 2}}", "{\"a\": 1, \"b\": 2, \"c\": [{\"a\": 1, \"b\": 2}], \"d\": {\"a\": 1, \"b\": 2}}"));
 
             List<String> departments = Arrays.asList("finance", "development");
             user.getAttributes().put("departments", departments);
@@ -132,24 +149,29 @@ public class OIDCProtocolMappersTest extends AbstractKeycloakTest {
 
             ClientResource app = findClientResourceByClientId(adminClient.realm("test"), "test-app");
 
-            ProtocolMapperRepresentation mapper = createAddressMapper(true, true);
+            ProtocolMapperRepresentation mapper = createAddressMapper(true, true, true);
             mapper.getConfig().put(AddressMapper.getModelPropertyName(AddressClaimSet.REGION), "region_some");
             mapper.getConfig().put(AddressMapper.getModelPropertyName(AddressClaimSet.COUNTRY), "country_some");
             mapper.getConfig().remove(AddressMapper.getModelPropertyName(AddressClaimSet.POSTAL_CODE)); // Even if we remove protocolMapper config property, it should still default to postal_code
             app.getProtocolMappers().createMapper(mapper).close();
 
-            ProtocolMapperRepresentation hard = createHardcodedClaim("hard", "hard", "coded", "String", false, null, true, true);
+            ProtocolMapperRepresentation hard = createHardcodedClaim("hard", "hard", "coded", "String", true, true);
             app.getProtocolMappers().createMapper(hard).close();
-            app.getProtocolMappers().createMapper(createHardcodedClaim("hard-nested", "nested.hard", "coded-nested", "String", false, null, true, true)).close();
-            app.getProtocolMappers().createMapper(createClaimMapper("custom phone", "phone", "home_phone", "String", true, "", true, true, true)).close();
-            app.getProtocolMappers().createMapper(createClaimMapper("nested phone", "phone", "home.phone", "String", true, "", true, true, true)).close();
-            app.getProtocolMappers().createMapper(createClaimMapper("departments", "departments", "department", "String", true, "", true, true, true)).close();
-            app.getProtocolMappers().createMapper(createClaimMapper("firstDepartment", "departments", "firstDepartment", "String", true, "", true, true, false)).close();
+            app.getProtocolMappers().createMapper(createHardcodedClaim("hard-nested", "nested.hard", "coded-nested", "String", true, true)).close();
+            app.getProtocolMappers().createMapper(createClaimMapper("custom phone", "phone", "home_phone", "String", true, true, true)).close();
+            app.getProtocolMappers().createMapper(createClaimMapper("nested phone", "phone", "home.phone", "String", true, true, true)).close();
+            app.getProtocolMappers().createMapper(createClaimMapper("dotted phone", "phone", "home\\.phone", "String", true, true, true)).close();
+            app.getProtocolMappers().createMapper(createClaimMapper("departments", "departments", "department", "String", true, true, true)).close();
+            app.getProtocolMappers().createMapper(createClaimMapper("firstDepartment", "departments", "firstDepartment", "String", true, true, false)).close();
             app.getProtocolMappers().createMapper(createHardcodedRole("hard-realm", "hardcoded")).close();
             app.getProtocolMappers().createMapper(createHardcodedRole("hard-app", "app.hardcoded")).close();
             app.getProtocolMappers().createMapper(createRoleNameMapper("rename-app-role", "test-app.customer-user", "realm-user")).close();
             app.getProtocolMappers().createMapper(createScriptMapper("test-script-mapper1","computed-via-script", "computed-via-script", "String", true, true, "'hello_' + user.username", false)).close();
             app.getProtocolMappers().createMapper(createScriptMapper("test-script-mapper2","multiValued-via-script", "multiValued-via-script", "String", true, true, "new java.util.ArrayList(['A','B'])", true)).close();
+            app.getProtocolMappers().createMapper(createClaimMapper("json-attribute-mapper", "json-attribute", "claim-from-json-attribute",
+                    "JSON", true, true, false)).close();
+            app.getProtocolMappers().createMapper(createClaimMapper("json-attribute-mapper-multi", "json-attribute-multi", "claim-from-json-attribute-multi",
+                    "JSON", true, true, true)).close();
 
             Response response = app.getProtocolMappers().createMapper(createScriptMapper("test-script-mapper3", "syntax-error-script", "syntax-error-script", "String", true, true, "func_tion foo(){ return 'fail';} foo()", false));
             assertThat(response.getStatusInfo().getFamily(), is(Response.Status.Family.CLIENT_ERROR));
@@ -170,6 +192,8 @@ public class OIDCProtocolMappersTest extends AbstractKeycloakTest {
             assertEquals(idToken.getAddress().getFormattedAddress(), "6 Foo Street");
             assertNotNull(idToken.getOtherClaims().get("home_phone"));
             assertThat((List<String>) idToken.getOtherClaims().get("home_phone"), hasItems("617-777-6666"));
+            assertNotNull(idToken.getOtherClaims().get("home.phone"));
+            assertThat((List<String>) idToken.getOtherClaims().get("home.phone"), hasItems("617-777-6666"));
             assertEquals("coded", idToken.getOtherClaims().get("hard"));
             Map nested = (Map) idToken.getOtherClaims().get("nested");
             assertEquals("coded-nested", nested.get("hard"));
@@ -182,6 +206,17 @@ public class OIDCProtocolMappersTest extends AbstractKeycloakTest {
             Object firstDepartment = idToken.getOtherClaims().get("firstDepartment");
             assertThat(firstDepartment, instanceOf(String.class));
             assertThat(firstDepartment, anyOf(is("finance"), is("development")));   // Has to be the first item
+
+            Map jsonClaim = (Map) idToken.getOtherClaims().get("claim-from-json-attribute");
+            assertThat(jsonClaim.get("a"), instanceOf(int.class));
+            assertThat(jsonClaim.get("c"), instanceOf(Collection.class));
+            assertThat(jsonClaim.get("d"), instanceOf(Map.class));
+
+            List<Map> jsonClaims = (List<Map>) idToken.getOtherClaims().get("claim-from-json-attribute-multi");
+            assertEquals(2, jsonClaims.size());
+            assertThat(jsonClaims.get(0).get("a"), instanceOf(int.class));
+            assertThat(jsonClaims.get(1).get("c"), instanceOf(Collection.class));
+            assertThat(jsonClaims.get(1).get("d"), instanceOf(Map.class));
 
             AccessToken accessToken = oauth.verifyToken(response.getAccessToken());
             assertEquals(accessToken.getName(), "Tom Brady");
@@ -204,11 +239,23 @@ public class OIDCProtocolMappersTest extends AbstractKeycloakTest {
             assertTrue(departments.contains("finance") && departments.contains("development"));
             assertTrue(accessToken.getRealmAccess().getRoles().contains("hardcoded"));
             assertTrue(accessToken.getRealmAccess().getRoles().contains("realm-user"));
-            Assert.assertFalse(accessToken.getResourceAccess("test-app").getRoles().contains("customer-user"));
+            Assert.assertNull(accessToken.getResourceAccess("test-app"));
             assertTrue(accessToken.getResourceAccess("app").getRoles().contains("hardcoded"));
 
             assertEquals("hello_test-user@localhost", accessToken.getOtherClaims().get("computed-via-script"));
             assertEquals(Arrays.asList("A","B"), accessToken.getOtherClaims().get("multiValued-via-script"));
+
+            // Assert audiences added through AudienceResolve mapper
+            Assert.assertThat(accessToken.getAudience(), arrayContainingInAnyOrder( "app", "account"));
+
+            // Assert allowed origins
+            Assert.assertNames(accessToken.getAllowedOrigins(), "http://localhost:8180", "https://localhost:8543");
+
+            jsonClaim = (Map) accessToken.getOtherClaims().get("claim-from-json-attribute");
+            assertThat(jsonClaim.get("a"), instanceOf(int.class));
+            assertThat(jsonClaim.get("c"), instanceOf(Collection.class));
+            assertThat(jsonClaim.get("d"), instanceOf(Map.class));
+
             oauth.openLogout();
         }
 
@@ -221,6 +268,7 @@ public class OIDCProtocolMappersTest extends AbstractKeycloakTest {
                         || model.getName().equals("hard")
                         || model.getName().equals("hard-nested")
                         || model.getName().equals("custom phone")
+                        || model.getName().equals("dotted phone")
                         || model.getName().equals("departments")
                         || model.getName().equals("firstDepartment")
                         || model.getName().equals("nested phone")
@@ -228,6 +276,7 @@ public class OIDCProtocolMappersTest extends AbstractKeycloakTest {
                         || model.getName().equals("hard-realm")
                         || model.getName().equals("hard-app")
                         || model.getName().equals("test-script-mapper")
+                        || model.getName().equals("json-attribute-mapper")
                         ) {
                     app.getProtocolMappers().delete(model.getId());
                 }
@@ -264,8 +313,8 @@ public class OIDCProtocolMappersTest extends AbstractKeycloakTest {
             userResource.update(user);
 
             ClientResource app = findClientResourceByClientId(adminClient.realm("test"), "test-app");
-            app.getProtocolMappers().createMapper(createClaimMapper("empty", "empty", "empty", "String", true, "", true, true, false)).close();
-            app.getProtocolMappers().createMapper(createClaimMapper("null", "null", "null", "String", true, "", true, true, false)).close();
+            app.getProtocolMappers().createMapper(createClaimMapper("empty", "empty", "empty", "String", true, true, false)).close();
+            app.getProtocolMappers().createMapper(createClaimMapper("null", "null", "null", "String", true, true, false)).close();
         }
 
         {
@@ -340,6 +389,107 @@ public class OIDCProtocolMappersTest extends AbstractKeycloakTest {
         deleteMappers(protocolMappers);
     }
 
+
+    // Test to update protocolMappers to not have roles on the default position (realm_access and resource_access properties)
+    @Test
+    public void testUserRolesMovedFromAccessTokenProperties() throws Exception {
+        RealmResource realm = adminClient.realm("test");
+        ClientScopeResource rolesScope = ApiUtil.findClientScopeByName(realm, OIDCLoginProtocolFactory.ROLES_SCOPE);
+
+        // Update builtin protocolMappers to put roles to different position (claim "custom.roles") for both realm and client roles
+        ProtocolMapperRepresentation realmRolesMapper = null;
+        ProtocolMapperRepresentation clientRolesMapper = null;
+        for (ProtocolMapperRepresentation rep : rolesScope.getProtocolMappers().getMappers()) {
+            if (OIDCLoginProtocolFactory.REALM_ROLES.equals(rep.getName())) {
+                realmRolesMapper = rep;
+            } else if (OIDCLoginProtocolFactory.CLIENT_ROLES.equals(rep.getName())) {
+                clientRolesMapper = rep;
+            }
+        }
+
+        String realmRolesTokenClaimOrig = realmRolesMapper.getConfig().get(OIDCAttributeMapperHelper.TOKEN_CLAIM_NAME);
+        String clientRolesTokenClaimOrig = clientRolesMapper.getConfig().get(OIDCAttributeMapperHelper.TOKEN_CLAIM_NAME);
+
+        realmRolesMapper.getConfig().put(OIDCAttributeMapperHelper.TOKEN_CLAIM_NAME, "custom.roles");
+        rolesScope.getProtocolMappers().update(realmRolesMapper.getId(), realmRolesMapper);
+        clientRolesMapper.getConfig().put(OIDCAttributeMapperHelper.TOKEN_CLAIM_NAME, "custom.roles");
+        rolesScope.getProtocolMappers().update(clientRolesMapper.getId(), clientRolesMapper);
+
+        // Create some hardcoded role mapper
+        Response resp = rolesScope.getProtocolMappers().createMapper(createHardcodedRole("hard-realm", "hardcoded"));
+        String hardcodedMapperId = ApiUtil.getCreatedId(resp);
+        resp.close();
+
+        try {
+            OAuthClient.AccessTokenResponse response = browserLogin("password", "test-user@localhost", "password");
+            AccessToken accessToken = oauth.verifyToken(response.getAccessToken());
+
+            // Assert roles are not on their original positions
+            Assert.assertNull(accessToken.getRealmAccess());
+            Assert.assertTrue(accessToken.getResourceAccess().isEmpty());
+
+            // KEYCLOAK-8481 Assert that accessToken JSON doesn't have "realm_access" or "resource_access" fields in it
+            String accessTokenJson = new String(new JWSInput(response.getAccessToken()).getContent(), StandardCharsets.UTF_8);
+            Assert.assertFalse(accessTokenJson.contains("realm_access"));
+            Assert.assertFalse(accessTokenJson.contains("resource_access"));
+
+            // Assert both realm and client roles on the new position. Hardcoded role should be here as well
+            Map<String, Object> cst1 = (Map<String, Object>) accessToken.getOtherClaims().get("custom");
+            List<String> roles = (List<String>) cst1.get("roles");
+            Assert.assertNames(roles, "offline_access", "user", "customer-user", "hardcoded", AccountRoles.VIEW_PROFILE, AccountRoles.MANAGE_ACCOUNT, AccountRoles.MANAGE_ACCOUNT_LINKS);
+
+            // Assert audience
+            Assert.assertNames(Arrays.asList(accessToken.getAudience()), "account");
+        } finally {
+            // Revert
+            rolesScope.getProtocolMappers().delete(hardcodedMapperId);
+
+            realmRolesMapper.getConfig().put(OIDCAttributeMapperHelper.TOKEN_CLAIM_NAME, realmRolesTokenClaimOrig);
+            rolesScope.getProtocolMappers().update(realmRolesMapper.getId(), realmRolesMapper);
+            clientRolesMapper.getConfig().put(OIDCAttributeMapperHelper.TOKEN_CLAIM_NAME, clientRolesTokenClaimOrig);
+            rolesScope.getProtocolMappers().update(clientRolesMapper.getId(), clientRolesMapper);
+        }
+    }
+
+
+    @Test
+    public void testRolesAndAllowedOriginsRemovedFromAccessToken() throws Exception {
+        RealmResource realm = adminClient.realm("test");
+        ClientScopeRepresentation allowedOriginsScope = ApiUtil.findClientScopeByName(realm, OIDCLoginProtocolFactory.WEB_ORIGINS_SCOPE).toRepresentation();
+        ClientScopeRepresentation rolesScope = ApiUtil.findClientScopeByName(realm, OIDCLoginProtocolFactory.ROLES_SCOPE).toRepresentation();
+
+        // Remove 'roles' and 'web-origins' scope from the client
+        ClientResource testApp = ApiUtil.findClientByClientId(realm, "test-app");
+        testApp.removeDefaultClientScope(allowedOriginsScope.getId());
+        testApp.removeDefaultClientScope(rolesScope.getId());
+
+        try {
+            OAuthClient.AccessTokenResponse response = browserLogin("password", "test-user@localhost", "password");
+            AccessToken accessToken = oauth.verifyToken(response.getAccessToken());
+
+            // Assert web origins are not in the token
+            Assert.assertNull(accessToken.getAllowedOrigins());
+
+            // Assert roles are not in the token
+            Assert.assertNull(accessToken.getRealmAccess());
+            Assert.assertTrue(accessToken.getResourceAccess().isEmpty());
+
+            // Assert client not in the token audience. Just in "issuedFor"
+            Assert.assertEquals("test-app", accessToken.getIssuedFor());
+            Assert.assertFalse(accessToken.hasAudience("test-app"));
+
+            // Assert IDToken still has "test-app" as an audience
+            IDToken idToken = oauth.verifyIDToken(response.getIdToken());
+            Assert.assertEquals("test-app", idToken.getIssuedFor());
+            Assert.assertTrue(idToken.hasAudience("test-app"));
+        } finally {
+            // Revert
+            testApp.addDefaultClientScope(allowedOriginsScope.getId());
+            testApp.addDefaultClientScope(rolesScope.getId());
+        }
+    }
+
+
     /**
      * KEYCLOAK-4205
      * @throws Exception
@@ -376,6 +526,91 @@ public class OIDCProtocolMappersTest extends AbstractKeycloakTest {
         // Revert
         deleteMappers(protocolMappers);
     }
+
+
+    /**
+     * KEYCLOAK-5259
+     * @throws Exception
+     */
+    @Test
+    public void testUserRoleToAttributeMappersWithFullScopeDisabled() throws Exception {
+        // Add mapper for realm roles
+        ProtocolMapperRepresentation realmMapper = ProtocolMapperUtil.createUserRealmRoleMappingMapper("pref.", "Realm roles mapper", "roles-custom.realm", true, true, true);
+        ProtocolMapperRepresentation clientMapper = ProtocolMapperUtil.createUserClientRoleMappingMapper("test-app", null, "Client roles mapper", "roles-custom.test-app", true, true, true);
+
+        ClientResource client = ApiUtil.findClientResourceByClientId(adminClient.realm("test"), "test-app");
+
+        // Disable full-scope-allowed
+        ClientRepresentation rep = client.toRepresentation();
+        rep.setFullScopeAllowed(false);
+        client.update(rep);
+
+        ProtocolMappersResource protocolMappers = ApiUtil.findClientResourceByClientId(adminClient.realm("test"), "test-app").getProtocolMappers();
+        protocolMappers.createMapper(Arrays.asList(realmMapper, clientMapper));
+
+        // Login user
+        OAuthClient.AccessTokenResponse response = browserLogin("password", "test-user@localhost", "password");
+        IDToken idToken = oauth.verifyIDToken(response.getIdToken());
+
+        // Verify attribute is filled
+        Map<String, Object> roleMappings = (Map<String, Object>)idToken.getOtherClaims().get("roles-custom");
+        Assert.assertThat(roleMappings.keySet(), containsInAnyOrder("realm", "test-app"));
+        Assert.assertThat(roleMappings.get("realm"), CoreMatchers.instanceOf(List.class));
+        Assert.assertThat(roleMappings.get("test-app"), CoreMatchers.instanceOf(List.class));
+
+        List<String> realmRoleMappings = (List<String>) roleMappings.get("realm");
+        List<String> testAppMappings = (List<String>) roleMappings.get("test-app");
+        assertRoles(realmRoleMappings,
+                "pref.user"                      // from direct assignment in user definition
+        );
+        assertRoles(testAppMappings,
+                "customer-user"                   // from direct assignment in user definition
+        );
+
+        // Revert
+        deleteMappers(protocolMappers);
+
+        rep = client.toRepresentation();
+        rep.setFullScopeAllowed(true);
+        client.update(rep);
+    }
+
+
+    // KEYCLOAK-8148 -- Test the scenario where:
+    // -- user is member of 2 groups
+    // -- both groups have same role "customer-user" assigned
+    // -- User login. Role will appear just once in the token (not twice)
+    @Test
+    public void testRoleMapperWithRoleInheritedFromMoreGroups() throws Exception {
+        // Create client-mapper
+        String clientId = "test-app";
+        ProtocolMapperRepresentation clientMapper = ProtocolMapperUtil.createUserClientRoleMappingMapper(clientId, null, "Client roles mapper", "roles-custom.test-app", true, true);
+
+        ProtocolMappersResource protocolMappers = ApiUtil.findClientResourceByClientId(adminClient.realm("test"), clientId).getProtocolMappers();
+        protocolMappers.createMapper(Arrays.asList(clientMapper));
+
+        // Add user 'level2GroupUser' to the group 'level2Group2'
+        GroupRepresentation level2Group2 = adminClient.realm("test").getGroupByPath("/topGroup/level2group2");
+        UserResource level2GroupUser = ApiUtil.findUserByUsernameId(adminClient.realm("test"), "level2GroupUser");
+        level2GroupUser.joinGroup(level2Group2.getId());
+
+        oauth.clientId(clientId);
+        OAuthClient.AccessTokenResponse response = browserLogin("password", "level2GroupUser", "password");
+        IDToken idToken = oauth.verifyIDToken(response.getIdToken());
+
+        // Verify attribute is filled AND it is filled only once
+        Map<String, Object> roleMappings = (Map<String, Object>)idToken.getOtherClaims().get("roles-custom");
+        Assert.assertThat(roleMappings.keySet(), containsInAnyOrder(clientId));
+        String testAppScopeMappings = (String) roleMappings.get(clientId);
+        assertRolesString(testAppScopeMappings,
+                "customer-user"      // from assignment to level2group or level2group2. It is filled just once
+        );
+
+        // Revert
+        level2GroupUser.leaveGroup(level2Group2.getId());
+        deleteMappers(protocolMappers);
+    }
+
 
     @Test
     public void testUserGroupRoleToAttributeMappers() throws Exception {
@@ -438,7 +673,7 @@ public class OIDCProtocolMappersTest extends AbstractKeycloakTest {
 
         // Verify attribute is filled
         Map<String, Object> roleMappings = (Map<String, Object>)idToken.getOtherClaims().get("roles-custom");
-        Assert.assertThat(roleMappings.keySet(), containsInAnyOrder("realm", clientId));
+        Assert.assertThat(roleMappings.keySet(), containsInAnyOrder("realm"));
         String realmRoleMappings = (String) roleMappings.get("realm");
         String testAppAuthzMappings = (String) roleMappings.get(clientId);
         assertRolesString(realmRoleMappings,
@@ -448,7 +683,7 @@ public class OIDCProtocolMappersTest extends AbstractKeycloakTest {
           "pref.realm-composite-role",      // from parent group of /roleRichGroup/level2group, i.e. from /roleRichGroup
           "pref.sample-realm-role"          // from realm role realm-composite-role
         );
-        assertRolesString(testAppAuthzMappings);  // There is no client role defined for test-app-authz
+        assertNull(testAppAuthzMappings);  // There is no client role defined for test-app-authz
 
         // Revert
         deleteMappers(protocolMappers);
@@ -476,10 +711,12 @@ public class OIDCProtocolMappersTest extends AbstractKeycloakTest {
         String testAppScopeMappings = (String) roleMappings.get(clientId);
         assertRolesString(realmRoleMappings,
           "pref.admin",                     // from direct assignment to /roleRichGroup/level2group
-          "pref.user"                       // from parent group of /roleRichGroup/level2group, i.e. from /roleRichGroup
+          "pref.user",                       // from parent group of /roleRichGroup/level2group, i.e. from /roleRichGroup
+          "pref.customer-user-premium"
         );
         assertRolesString(testAppScopeMappings,
-          "test-app-allowed-by-scope"       // from direct assignment to roleRichUser, present as scope allows it
+          "test-app-allowed-by-scope",       // from direct assignment to roleRichUser, present as scope allows it
+                "test-app-disallowed-by-scope"
         );
 
         // Revert
@@ -508,15 +745,384 @@ public class OIDCProtocolMappersTest extends AbstractKeycloakTest {
         String testAppScopeMappings = (String) roleMappings.get(clientId);
         assertRolesString(realmRoleMappings,
           "pref.admin",                     // from direct assignment to /roleRichGroup/level2group
-          "pref.user"                       // from parent group of /roleRichGroup/level2group, i.e. from /roleRichGroup
+          "pref.user",  // from parent group of /roleRichGroup/level2group, i.e. from /roleRichGroup
+          "pref.customer-user-premium"
         );
         assertRolesString(testAppScopeMappings,
           "test-app-allowed-by-scope",      // from direct assignment to roleRichUser, present as scope allows it
-          "customer-admin-composite-role"   // from direct assignment to /roleRichGroup/level2group, present as scope allows it
+          "test-app-disallowed-by-scope"   // from direct assignment to /roleRichGroup/level2group, present as scope allows it
         );
 
         // Revert
         deleteMappers(protocolMappers);
+    }
+
+    @Test
+    public void testGroupAttributeUserOneGroupNoMultivalueNoAggregate() throws Exception {
+        // get the user
+        UserResource userResource = findUserByUsernameId(adminClient.realm("test"), "test-user@localhost");
+        UserRepresentation user = userResource.toRepresentation();
+        user.setAttributes(new HashMap<>());
+        user.getAttributes().put("group-value", Arrays.asList("user-value1", "user-value2"));
+        userResource.update(user);
+        // create a group1 with two values
+        GroupRepresentation group1 = new GroupRepresentation();
+        group1.setName("group1");
+        group1.setAttributes(new HashMap<>());
+        group1.getAttributes().put("group-value", Arrays.asList("value1", "value2"));
+        adminClient.realm("test").groups().add(group1);
+        group1 = adminClient.realm("test").getGroupByPath("/group1");
+        userResource.joinGroup(group1.getId());
+        // create the attribute mapper
+        ProtocolMappersResource protocolMappers = findClientResourceByClientId(adminClient.realm("test"), "test-app").getProtocolMappers();
+        protocolMappers.createMapper(createClaimMapper("group-value", "group-value", "group-value", "String", true, true, false, false)).close();
+
+        try {
+            // test it
+            OAuthClient.AccessTokenResponse response = browserLogin("password", "test-user@localhost", "password");
+
+            IDToken idToken = oauth.verifyIDToken(response.getIdToken());
+            assertNotNull(idToken.getOtherClaims());
+            assertNotNull(idToken.getOtherClaims().get("group-value"));
+            assertTrue(idToken.getOtherClaims().get("group-value") instanceof String);
+            assertTrue("user-value1".equals(idToken.getOtherClaims().get("group-value")) ||
+                    "user-value2".equals(idToken.getOtherClaims().get("group-value")));
+        } finally {
+            // revert
+            user.getAttributes().remove("group-value");
+            userResource.update(user);
+            userResource.leaveGroup(group1.getId());
+            adminClient.realm("test").groups().group(group1.getId()).remove();
+            deleteMappers(protocolMappers);
+        }
+    }
+
+    @Test
+    public void testGroupAttributeUserOneGroupMultivalueNoAggregate() throws Exception {
+        // get the user
+        UserResource userResource = findUserByUsernameId(adminClient.realm("test"), "test-user@localhost");
+        UserRepresentation user = userResource.toRepresentation();
+        user.setAttributes(new HashMap<>());
+        user.getAttributes().put("group-value", Arrays.asList("user-value1", "user-value2"));
+        userResource.update(user);
+        // create a group1 with two values
+        GroupRepresentation group1 = new GroupRepresentation();
+        group1.setName("group1");
+        group1.setAttributes(new HashMap<>());
+        group1.getAttributes().put("group-value", Arrays.asList("value1", "value2"));
+        adminClient.realm("test").groups().add(group1);
+        group1 = adminClient.realm("test").getGroupByPath("/group1");
+        userResource.joinGroup(group1.getId());
+        // create the attribute mapper
+        ProtocolMappersResource protocolMappers = findClientResourceByClientId(adminClient.realm("test"), "test-app").getProtocolMappers();
+        protocolMappers.createMapper(createClaimMapper("group-value", "group-value", "group-value", "String", true, true, true, false)).close();
+
+        try {
+            // test it
+            OAuthClient.AccessTokenResponse response = browserLogin("password", "test-user@localhost", "password");
+
+            IDToken idToken = oauth.verifyIDToken(response.getIdToken());
+            assertNotNull(idToken.getOtherClaims());
+            assertNotNull(idToken.getOtherClaims().get("group-value"));
+            assertTrue(idToken.getOtherClaims().get("group-value") instanceof List);
+            assertEquals(2, ((List) idToken.getOtherClaims().get("group-value")).size());
+            assertTrue(((List) idToken.getOtherClaims().get("group-value")).contains("user-value1"));
+            assertTrue(((List) idToken.getOtherClaims().get("group-value")).contains("user-value2"));
+        } finally {
+            // revert
+            user.getAttributes().remove("group-value");
+            userResource.update(user);
+            userResource.leaveGroup(group1.getId());
+            adminClient.realm("test").groups().group(group1.getId()).remove();
+            deleteMappers(protocolMappers);
+        }
+    }
+
+    @Test
+    public void testGroupAttributeUserOneGroupMultivalueAggregate() throws Exception {
+        // get the user
+        UserResource userResource = findUserByUsernameId(adminClient.realm("test"), "test-user@localhost");
+        UserRepresentation user = userResource.toRepresentation();
+        user.setAttributes(new HashMap<>());
+        user.getAttributes().put("group-value", Arrays.asList("user-value1", "user-value2"));
+        userResource.update(user);
+        // create a group1 with two values
+        GroupRepresentation group1 = new GroupRepresentation();
+        group1.setName("group1");
+        group1.setAttributes(new HashMap<>());
+        group1.getAttributes().put("group-value", Arrays.asList("value1", "value2"));
+        adminClient.realm("test").groups().add(group1);
+        group1 = adminClient.realm("test").getGroupByPath("/group1");
+        userResource.joinGroup(group1.getId());
+        // create the attribute mapper
+        ProtocolMappersResource protocolMappers = findClientResourceByClientId(adminClient.realm("test"), "test-app").getProtocolMappers();
+        protocolMappers.createMapper(createClaimMapper("group-value", "group-value", "group-value", "String", true, true, true, true)).close();
+
+        try {
+            // test it
+            OAuthClient.AccessTokenResponse response = browserLogin("password", "test-user@localhost", "password");
+
+            IDToken idToken = oauth.verifyIDToken(response.getIdToken());
+            assertNotNull(idToken.getOtherClaims());
+            assertNotNull(idToken.getOtherClaims().get("group-value"));
+            assertTrue(idToken.getOtherClaims().get("group-value") instanceof List);
+            assertEquals(4, ((List) idToken.getOtherClaims().get("group-value")).size());
+            assertTrue(((List) idToken.getOtherClaims().get("group-value")).contains("user-value1"));
+            assertTrue(((List) idToken.getOtherClaims().get("group-value")).contains("user-value2"));
+            assertTrue(((List) idToken.getOtherClaims().get("group-value")).contains("value1"));
+            assertTrue(((List) idToken.getOtherClaims().get("group-value")).contains("value2"));
+        } finally {
+            // revert
+            user.getAttributes().remove("group-value");
+            userResource.update(user);
+            userResource.leaveGroup(group1.getId());
+            adminClient.realm("test").groups().group(group1.getId()).remove();
+            deleteMappers(protocolMappers);
+        }
+    }
+
+    @Test
+    public void testGroupAttributeOneGroupNoMultivalueNoAggregate() throws Exception {
+        // get the user
+        UserResource userResource = findUserByUsernameId(adminClient.realm("test"), "test-user@localhost");
+        // create a group1 with two values
+        GroupRepresentation group1 = new GroupRepresentation();
+        group1.setName("group1");
+        group1.setAttributes(new HashMap<>());
+        group1.getAttributes().put("group-value", Arrays.asList("value1", "value2"));
+        adminClient.realm("test").groups().add(group1);
+        group1 = adminClient.realm("test").getGroupByPath("/group1");
+        userResource.joinGroup(group1.getId());
+        // create the attribute mapper
+        ProtocolMappersResource protocolMappers = findClientResourceByClientId(adminClient.realm("test"), "test-app").getProtocolMappers();
+        protocolMappers.createMapper(createClaimMapper("group-value", "group-value", "group-value", "String", true, true, false, false)).close();
+
+        try {
+            // test it
+            OAuthClient.AccessTokenResponse response = browserLogin("password", "test-user@localhost", "password");
+
+            IDToken idToken = oauth.verifyIDToken(response.getIdToken());
+            assertNotNull(idToken.getOtherClaims());
+            assertNotNull(idToken.getOtherClaims().get("group-value"));
+            assertTrue(idToken.getOtherClaims().get("group-value") instanceof String);
+            assertTrue("value1".equals(idToken.getOtherClaims().get("group-value"))
+                    || "value2".equals(idToken.getOtherClaims().get("group-value")));
+        } finally {
+            // revert
+            userResource.leaveGroup(group1.getId());
+            adminClient.realm("test").groups().group(group1.getId()).remove();
+            deleteMappers(protocolMappers);
+        }
+    }
+
+    @Test
+    public void testGroupAttributeOneGroupMultiValueNoAggregate() throws Exception {
+        // get the user
+        UserResource userResource = findUserByUsernameId(adminClient.realm("test"), "test-user@localhost");
+        // create a group1 with two values
+        GroupRepresentation group1 = new GroupRepresentation();
+        group1.setName("group1");
+        group1.setAttributes(new HashMap<>());
+        group1.getAttributes().put("group-value", Arrays.asList("value1", "value2"));
+        adminClient.realm("test").groups().add(group1);
+        group1 = adminClient.realm("test").getGroupByPath("/group1");
+        userResource.joinGroup(group1.getId());
+
+        // create the attribute mapper
+        ProtocolMappersResource protocolMappers = findClientResourceByClientId(adminClient.realm("test"), "test-app").getProtocolMappers();
+        protocolMappers.createMapper(createClaimMapper("group-value", "group-value", "group-value", "String", true, true, true, false)).close();
+
+        try {
+            // test it
+            OAuthClient.AccessTokenResponse response = browserLogin("password", "test-user@localhost", "password");
+
+            IDToken idToken = oauth.verifyIDToken(response.getIdToken());
+            assertNotNull(idToken.getOtherClaims());
+            assertNotNull(idToken.getOtherClaims().get("group-value"));
+            assertTrue(idToken.getOtherClaims().get("group-value") instanceof List);
+            assertEquals(2, ((List) idToken.getOtherClaims().get("group-value")).size());
+            assertTrue(((List) idToken.getOtherClaims().get("group-value")).contains("value1"));
+            assertTrue(((List) idToken.getOtherClaims().get("group-value")).contains("value2"));
+        } finally {
+            // revert
+            userResource.leaveGroup(group1.getId());
+            adminClient.realm("test").groups().group(group1.getId()).remove();
+            deleteMappers(protocolMappers);
+        }
+    }
+
+    @Test
+    public void testGroupAttributeOneGroupMultiValueAggregate() throws Exception {
+        // get the user
+        UserResource userResource = findUserByUsernameId(adminClient.realm("test"), "test-user@localhost");
+        // create a group1 with two values
+        GroupRepresentation group1 = new GroupRepresentation();
+        group1.setName("group1");
+        group1.setAttributes(new HashMap<>());
+        group1.getAttributes().put("group-value", Arrays.asList("value1", "value2"));
+        adminClient.realm("test").groups().add(group1);
+        group1 = adminClient.realm("test").getGroupByPath("/group1");
+        userResource.joinGroup(group1.getId());
+
+        // create the attribute mapper
+        ProtocolMappersResource protocolMappers = findClientResourceByClientId(adminClient.realm("test"), "test-app").getProtocolMappers();
+        protocolMappers.createMapper(createClaimMapper("group-value", "group-value", "group-value", "String", true, true, true, true)).close();
+
+        try {
+            // test it
+            OAuthClient.AccessTokenResponse response = browserLogin("password", "test-user@localhost", "password");
+
+            IDToken idToken = oauth.verifyIDToken(response.getIdToken());
+            assertNotNull(idToken.getOtherClaims());
+            assertNotNull(idToken.getOtherClaims().get("group-value"));
+            assertTrue(idToken.getOtherClaims().get("group-value") instanceof List);
+            assertEquals(2, ((List) idToken.getOtherClaims().get("group-value")).size());
+            assertTrue(((List) idToken.getOtherClaims().get("group-value")).contains("value1"));
+            assertTrue(((List) idToken.getOtherClaims().get("group-value")).contains("value2"));
+        } finally {
+            // revert
+            userResource.leaveGroup(group1.getId());
+            adminClient.realm("test").groups().group(group1.getId()).remove();
+            deleteMappers(protocolMappers);
+        }
+    }
+
+    @Test
+    public void testGroupAttributeTwoGroupNoMultivalueNoAggregate() throws Exception {
+        // get the user
+        UserResource userResource = findUserByUsernameId(adminClient.realm("test"), "test-user@localhost");
+        // create two groups with two values (one is the same value)
+        GroupRepresentation group1 = new GroupRepresentation();
+        group1.setName("group1");
+        group1.setAttributes(new HashMap<>());
+        group1.getAttributes().put("group-value", Arrays.asList("value1", "value2"));
+        adminClient.realm("test").groups().add(group1);
+        group1 = adminClient.realm("test").getGroupByPath("/group1");
+        userResource.joinGroup(group1.getId());
+        GroupRepresentation group2 = new GroupRepresentation();
+        group2.setName("group2");
+        group2.setAttributes(new HashMap<>());
+        group2.getAttributes().put("group-value", Arrays.asList("value2", "value3"));
+        adminClient.realm("test").groups().add(group2);
+        group2 = adminClient.realm("test").getGroupByPath("/group2");
+        userResource.joinGroup(group2.getId());
+
+        // create the attribute mapper
+        ProtocolMappersResource protocolMappers = findClientResourceByClientId(adminClient.realm("test"), "test-app").getProtocolMappers();
+        protocolMappers.createMapper(createClaimMapper("group-value", "group-value", "group-value", "String", true, true, false, false)).close();
+
+        try {
+            // test it
+            OAuthClient.AccessTokenResponse response = browserLogin("password", "test-user@localhost", "password");
+
+            IDToken idToken = oauth.verifyIDToken(response.getIdToken());
+            assertNotNull(idToken.getOtherClaims());
+            assertNotNull(idToken.getOtherClaims().get("group-value"));
+            assertTrue(idToken.getOtherClaims().get("group-value") instanceof String);
+            assertTrue("value1".equals(idToken.getOtherClaims().get("group-value"))
+                    || "value2".equals(idToken.getOtherClaims().get("group-value"))
+                    || "value3".equals(idToken.getOtherClaims().get("group-value")));
+        } finally {
+            // revert
+            userResource.leaveGroup(group1.getId());
+            adminClient.realm("test").groups().group(group1.getId()).remove();
+            userResource.leaveGroup(group2.getId());
+            adminClient.realm("test").groups().group(group2.getId()).remove();
+            deleteMappers(protocolMappers);
+        }
+    }
+
+    @Test
+    public void testGroupAttributeTwoGroupMultiValueNoAggregate() throws Exception {
+        // get the user
+        UserResource userResource = findUserByUsernameId(adminClient.realm("test"), "test-user@localhost");
+        // create two groups with two values (one is the same value)
+        GroupRepresentation group1 = new GroupRepresentation();
+        group1.setName("group1");
+        group1.setAttributes(new HashMap<>());
+        group1.getAttributes().put("group-value", Arrays.asList("value1", "value2"));
+        adminClient.realm("test").groups().add(group1);
+        group1 = adminClient.realm("test").getGroupByPath("/group1");
+        userResource.joinGroup(group1.getId());
+        GroupRepresentation group2 = new GroupRepresentation();
+        group2.setName("group2");
+        group2.setAttributes(new HashMap<>());
+        group2.getAttributes().put("group-value", Arrays.asList("value2", "value3"));
+        adminClient.realm("test").groups().add(group2);
+        group2 = adminClient.realm("test").getGroupByPath("/group2");
+        userResource.joinGroup(group2.getId());
+
+        // create the attribute mapper
+        ProtocolMappersResource protocolMappers = findClientResourceByClientId(adminClient.realm("test"), "test-app").getProtocolMappers();
+        protocolMappers.createMapper(createClaimMapper("group-value", "group-value", "group-value", "String", true, true, true, false)).close();
+
+        try {
+            // test it
+            OAuthClient.AccessTokenResponse response = browserLogin("password", "test-user@localhost", "password");
+
+            IDToken idToken = oauth.verifyIDToken(response.getIdToken());
+            assertNotNull(idToken.getOtherClaims());
+            assertNotNull(idToken.getOtherClaims().get("group-value"));
+            assertTrue(idToken.getOtherClaims().get("group-value") instanceof List);
+            assertEquals(2, ((List) idToken.getOtherClaims().get("group-value")).size());
+            assertTrue((((List) idToken.getOtherClaims().get("group-value")).contains("value1")
+                    && ((List) idToken.getOtherClaims().get("group-value")).contains("value2"))
+                    || (((List) idToken.getOtherClaims().get("group-value")).contains("value2")
+                    && ((List) idToken.getOtherClaims().get("group-value")).contains("value3")));
+        } finally {
+            // revert
+            userResource.leaveGroup(group1.getId());
+            adminClient.realm("test").groups().group(group1.getId()).remove();
+            userResource.leaveGroup(group2.getId());
+            adminClient.realm("test").groups().group(group2.getId()).remove();
+            deleteMappers(protocolMappers);
+        }
+    }
+
+    @Test
+    public void testGroupAttributeTwoGroupMultiValueAggregate() throws Exception {
+        // get the user
+        UserResource userResource = findUserByUsernameId(adminClient.realm("test"), "test-user@localhost");
+        // create two groups with two values (one is the same value)
+        GroupRepresentation group1 = new GroupRepresentation();
+        group1.setName("group1");
+        group1.setAttributes(new HashMap<>());
+        group1.getAttributes().put("group-value", Arrays.asList("value1", "value2"));
+        adminClient.realm("test").groups().add(group1);
+        group1 = adminClient.realm("test").getGroupByPath("/group1");
+        userResource.joinGroup(group1.getId());
+        GroupRepresentation group2 = new GroupRepresentation();
+        group2.setName("group2");
+        group2.setAttributes(new HashMap<>());
+        group2.getAttributes().put("group-value", Arrays.asList("value2", "value3"));
+        adminClient.realm("test").groups().add(group2);
+        group2 = adminClient.realm("test").getGroupByPath("/group2");
+        userResource.joinGroup(group2.getId());
+
+        // create the attribute mapper
+        ProtocolMappersResource protocolMappers = findClientResourceByClientId(adminClient.realm("test"), "test-app").getProtocolMappers();
+        protocolMappers.createMapper(createClaimMapper("group-value", "group-value", "group-value", "String", true, true, true, true)).close();
+
+        try {
+            // test it
+            OAuthClient.AccessTokenResponse response = browserLogin("password", "test-user@localhost", "password");
+
+            IDToken idToken = oauth.verifyIDToken(response.getIdToken());
+            assertNotNull(idToken.getOtherClaims());
+            assertNotNull(idToken.getOtherClaims().get("group-value"));
+            assertTrue(idToken.getOtherClaims().get("group-value") instanceof List);
+            assertEquals(3, ((List) idToken.getOtherClaims().get("group-value")).size());
+            assertTrue(((List) idToken.getOtherClaims().get("group-value")).contains("value1"));
+            assertTrue(((List) idToken.getOtherClaims().get("group-value")).contains("value2"));
+            assertTrue(((List) idToken.getOtherClaims().get("group-value")).contains("value3"));
+        } finally {
+            // revert
+            userResource.leaveGroup(group1.getId());
+            adminClient.realm("test").groups().group(group1.getId()).remove();
+            userResource.leaveGroup(group2.getId());
+            adminClient.realm("test").groups().group(group2.getId()).remove();
+            deleteMappers(protocolMappers);
+        }
     }
 
     private void assertRoles(List<String> actualRoleList, String ...expectedRoles){
@@ -542,8 +1148,6 @@ public class OIDCProtocolMappersTest extends AbstractKeycloakTest {
         rep.setName(name);
         rep.setProtocolMapper(mapperType);
         rep.setConfig(config);
-        rep.setConsentRequired(true);
-        rep.setConsentText("Test Consent Text");
         return rep;
     }
 

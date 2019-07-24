@@ -19,6 +19,7 @@ package org.keycloak.protocol.oidc.mappers;
 
 import org.jboss.logging.Logger;
 import org.keycloak.common.Profile;
+import org.keycloak.models.ClientSessionContext;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.ProtocolMapperContainerModel;
 import org.keycloak.models.ProtocolMapperModel;
@@ -35,8 +36,6 @@ import org.keycloak.scripting.EvaluatableScriptAdapter;
 import org.keycloak.scripting.ScriptCompilationException;
 import org.keycloak.scripting.ScriptingProvider;
 
-import javax.script.ScriptEngine;
-import javax.script.ScriptEngineManager;
 import java.util.List;
 
 /**
@@ -76,7 +75,7 @@ public class ScriptBasedOIDCProtocolMapper extends AbstractOIDCProtocolMapper im
         " * realm - the current realm\n" + //
         " * token - the current token\n" + //
         " * userSession - the current userSession\n" + //
-        " * keycloakSession - the current userSession\n" + //
+        " * keycloakSession - the current keycloakSession\n" + //
         " */\n\n\n//insert your code here..." //
       )
       .add()
@@ -120,7 +119,13 @@ public class ScriptBasedOIDCProtocolMapper extends AbstractOIDCProtocolMapper im
     return Profile.isFeatureEnabled(Profile.Feature.SCRIPTS);
   }
 
-  protected void setClaim(IDToken token, ProtocolMapperModel mappingModel, UserSessionModel userSession, KeycloakSession keycloakSession) {
+  @Override
+  public int getPriority() {
+    return ProtocolMapperUtils.PRIORITY_SCRIPT_MAPPER;
+  }
+
+  @Override
+  protected void setClaim(IDToken token, ProtocolMapperModel mappingModel, UserSessionModel userSession, KeycloakSession keycloakSession, ClientSessionContext clientSessionCtx) {
 
     UserModel user = userSession.getUser();
     String scriptSource = mappingModel.getConfig().get(SCRIPT);
@@ -169,11 +174,9 @@ public class ScriptBasedOIDCProtocolMapper extends AbstractOIDCProtocolMapper im
   public static ProtocolMapperModel create(String name,
                                            String userAttribute,
                                            String tokenClaimName, String claimType,
-                                           boolean consentRequired, String consentText,
                                            boolean accessToken, boolean idToken, String script, boolean multiValued) {
     ProtocolMapperModel mapper = OIDCAttributeMapperHelper.createClaimMapper(name, userAttribute,
       tokenClaimName, claimType,
-      consentRequired, consentText,
       accessToken, idToken,
       PROVIDER_ID);
 

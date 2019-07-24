@@ -19,6 +19,7 @@ package org.keycloak.testsuite;
 
 import org.keycloak.common.util.MultivaluedHashMap;
 import org.keycloak.representations.idm.ClientRepresentation;
+import org.keycloak.representations.idm.ClientScopeRepresentation;
 import org.keycloak.representations.idm.ComponentRepresentation;
 import org.keycloak.representations.idm.ConfigPropertyRepresentation;
 import org.keycloak.representations.idm.GroupRepresentation;
@@ -35,7 +36,10 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.hamcrest.Matchers.allOf;
+import static org.hamcrest.Matchers.containsInAnyOrder;
+import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
+import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.lessThanOrEqualTo;
 
 /**
@@ -81,8 +85,10 @@ public class Assert extends org.junit.Assert {
             return ((UserFederationProviderFactoryRepresentation) o1).getId();
         } else if (o1 instanceof GroupRepresentation) {
             return ((GroupRepresentation) o1).getName();
-        }else if (o1 instanceof ComponentRepresentation) {
+        } else if (o1 instanceof ComponentRepresentation) {
             return ((ComponentRepresentation) o1).getName();
+        } else if (o1 instanceof ClientScopeRepresentation) {
+            return ((ClientScopeRepresentation) o1).getName();
         }
 
         throw new IllegalArgumentException();
@@ -142,4 +148,11 @@ public class Assert extends org.junit.Assert {
         org.junit.Assert.assertThat(actual, allOf(greaterThanOrEqualTo(expected - 50), lessThanOrEqualTo(expected)));
     }
 
+    public static void assertRoleAttributes(Map<String, List<String>> expected, Map<String, List<String>> actual) {
+        assertThat(actual.keySet(), equalTo(expected.keySet()));
+        for (String expectedKey : expected.keySet()) {
+            assertThat(actual.get(expectedKey).size(), is(equalTo(expected.get(expectedKey).size())));
+            assertThat(actual.get(expectedKey), containsInAnyOrder(expected.get(expectedKey).toArray()));
+        }
+    }
 }

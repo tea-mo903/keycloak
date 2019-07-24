@@ -45,7 +45,6 @@ import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.MultivaluedMap;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.UriBuilder;
-import javax.ws.rs.core.UriInfo;
 import javax.ws.rs.ext.Providers;
 
 /**
@@ -64,9 +63,6 @@ public class ClientsManagementService {
 
     @Context
     protected HttpHeaders headers;
-
-    @Context
-    private UriInfo uriInfo;
 
     @Context
     private ClientConnection clientConnection;
@@ -124,7 +120,12 @@ public class ClientsManagementService {
         event.client(client).detail(Details.NODE_HOST, nodeHost);
         logger.debugf("Registering cluster host '%s' for client '%s'", nodeHost, client.getClientId());
 
-        client.registerNode(nodeHost, Time.currentTime());
+        try {
+            client.registerNode(nodeHost, Time.currentTime());
+        } catch (RuntimeException e) {
+            event.error(e.getMessage());
+            throw e;
+        }
 
         event.success();
 
@@ -193,7 +194,7 @@ public class ClientsManagementService {
 
 
     private boolean checkSsl() {
-        if (uriInfo.getBaseUri().getScheme().equals("https")) {
+        if (session.getContext().getUri().getBaseUri().getScheme().equals("https")) {
             return true;
         } else {
             return !realm.getSslRequired().isRequired(clientConnection);

@@ -55,7 +55,7 @@ import org.keycloak.util.JsonSerialization;
 import javax.ws.rs.GET;
 import javax.ws.rs.Path;
 import javax.ws.rs.QueryParam;
-import javax.ws.rs.core.Context;
+import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.MultivaluedMap;
 import javax.ws.rs.core.Response;
@@ -101,8 +101,7 @@ public class OIDCIdentityProvider extends AbstractOAuth2IdentityProvider<OIDCIde
 
         @GET
         @Path("logout_response")
-        public Response logoutResponse(@Context UriInfo uriInfo,
-                                       @QueryParam("state") String state) {
+        public Response logoutResponse(@QueryParam("state") String state) {
             UserSessionModel userSession = session.sessions().getUserSession(realm, state);
             if (userSession == null) {
                 logger.error("no valid user session");
@@ -118,7 +117,7 @@ public class OIDCIdentityProvider extends AbstractOAuth2IdentityProvider<OIDCIde
                 event.error(Errors.USER_SESSION_NOT_FOUND);
                 return ErrorPage.error(session, null, Response.Status.BAD_REQUEST, Messages.SESSION_NOT_ACTIVE);
             }
-            return AuthenticationManager.finishBrowserLogout(session, realm, userSession, uriInfo, clientConnection, headers);
+            return AuthenticationManager.finishBrowserLogout(session, realm, userSession, session.getContext().getUri(), clientConnection, headers);
         }
 
     }
@@ -249,8 +248,14 @@ public class OIDCIdentityProvider extends AbstractOAuth2IdentityProvider<OIDCIde
                 if (newResponse.getExpiresIn() > 0) {
                     int accessTokenExpiration = Time.currentTime() + (int) newResponse.getExpiresIn();
                     newResponse.getOtherClaims().put(ACCESS_TOKEN_EXPIRATION, accessTokenExpiration);
-                    response = JsonSerialization.writeValueAsString(newResponse);
                 }
+
+                if (newResponse.getRefreshToken() == null && tokenResponse.getRefreshToken() != null) {
+                    newResponse.setRefreshToken(tokenResponse.getRefreshToken());
+                    newResponse.setRefreshExpiresIn(tokenResponse.getRefreshExpiresIn());
+                }
+                response = JsonSerialization.writeValueAsString(newResponse);
+                
                 String oldToken = tokenUserSession.getNote(FEDERATED_ACCESS_TOKEN);
                 if (oldToken != null && oldToken.equals(tokenResponse.getToken())) {
                     int accessTokenExpiration = newResponse.getExpiresIn() > 0 ? Time.currentTime() + (int) newResponse.getExpiresIn() : 0;
@@ -366,6 +371,7 @@ public class OIDCIdentityProvider extends AbstractOAuth2IdentityProvider<OIDCIde
         }
     }
 
+    private static final MediaType APPLICATION_JWT_TYPE = MediaType.valueOf("application/jwt");
 
     protected BrokeredIdentityContext extractIdentity(AccessTokenResponse tokenResponse, String accessToken, JsonWebToken idToken) throws IOException {
         String id = idToken.getSubject();
@@ -379,20 +385,38 @@ public class OIDCIdentityProvider extends AbstractOAuth2IdentityProvider<OIDCIde
             if (userInfoUrl != null && !userInfoUrl.isEmpty() && (id == null || name == null || preferredUsername == null || email == null)) {
 
                 if (accessToken != null) {
-                    SimpleHttp.Response response = SimpleHttp.doGet(userInfoUrl, session)
-                            .header("Authorization", "Bearer " + accessToken).asResponse();
-                    if (response.getStatus() != 200) {
-                        String msg = "failed to invoke user info url";
-                        try {
-                            String tmp = response.asString();
-                            if (tmp != null) msg = tmp;
-
-                        } catch (IOException e) {
-
-                        }
-                        throw new IdentityBrokerException("Failed to invoke on user info url: " + msg);
+                    SimpleHttp.Response response = executeRequest(userInfoUrl, SimpleHttp.doGet(userInfoUrl, session).header("Authorization", "Bearer " + accessToken));
+                    String contentType = response.getFirstHeader(HttpHeaders.CONTENT_TYPE);
+                    MediaType contentMediaType;
+                    try {
+                        contentMediaType = MediaType.valueOf(contentType);
+                    } catch (IllegalArgumentException ex) {
+                        contentMediaType = null;
                     }
-                    JsonNode userInfo = response.asJson();
+                    if (contentMediaType == null || contentMediaType.isWildcardSubtype() || contentMediaType.isWildcardType()) {
+                        throw new RuntimeException("Unsupported content-type [" + contentType + "] in response from [" + userInfoUrl + "].");
+                    }
+                    JsonNode userInfo;
+
+                    if (MediaType.APPLICATION_JSON_TYPE.isCompatible(contentMediaType)) {
+                        userInfo = response.asJson();
+                    } else if (APPLICATION_JWT_TYPE.isCompatible(contentMediaType)) {
+                        JWSInput jwsInput;
+
+                        try {
+                            jwsInput = new JWSInput(response.asString());
+                        } catch (JWSInputException cause) {
+                            throw new RuntimeException("Failed to parse JWT userinfo response", cause);
+                        }
+
+                        if (verify(jwsInput)) {
+                            userInfo = JsonSerialization.readValue(jwsInput.getContent(), JsonNode.class);
+                        } else {
+                            throw new RuntimeException("Failed to verify signature of userinfo response from [" + userInfoUrl + "].");
+                        }
+                    } else {
+                        throw new RuntimeException("Unsupported content-type [" + contentType + "] in response from [" + userInfoUrl + "].");
+                    }
 
                     id = getJsonProperty(userInfo, "sub");
                     name = getJsonProperty(userInfo, "name");
@@ -435,6 +459,21 @@ public class OIDCIdentityProvider extends AbstractOAuth2IdentityProvider<OIDCIde
         return getConfig().getUserInfoUrl();
     }
 
+    private SimpleHttp.Response executeRequest(String url, SimpleHttp request) throws IOException {
+        SimpleHttp.Response response = request.asResponse();
+        if (response.getStatus() != 200) {
+            String msg = "failed to invoke url [" + url + "]";
+            try {
+                String tmp = response.asString();
+                if (tmp != null) msg = tmp;
+
+            } catch (IOException e) {
+
+            }
+            throw new IdentityBrokerException("Failed to invoke url [" + url + "]: " + msg);
+        }
+        return  response;
+    }
 
     private String verifyAccessToken(AccessTokenResponse tokenResponse) {
         String accessToken = tokenResponse.getToken();
@@ -448,9 +487,14 @@ public class OIDCIdentityProvider extends AbstractOAuth2IdentityProvider<OIDCIde
     protected boolean verify(JWSInput jws) {
         if (!getConfig().isValidateSignature()) return true;
 
-        PublicKey publicKey = PublicKeyStorageManager.getIdentityProviderPublicKey(session, session.getContext().getRealm(), getConfig(), jws);
+        try {
+            PublicKey publicKey = PublicKeyStorageManager.getIdentityProviderPublicKey(session, session.getContext().getRealm(), getConfig(), jws);
 
-        return publicKey != null && RSAProvider.verify(jws, publicKey);
+            return publicKey != null && RSAProvider.verify(jws, publicKey);
+        } catch (Exception e) {
+            logger.debug("Failed to verify token", e);
+            return false;
+        }
     }
 
     protected JsonWebToken validateToken(String encodedToken) {
@@ -487,7 +531,7 @@ public class OIDCIdentityProvider extends AbstractOAuth2IdentityProvider<OIDCIde
 
         String trustedIssuers = getConfig().getIssuer();
 
-        if (trustedIssuers != null) {
+        if (trustedIssuers != null && trustedIssuers.length() > 0) {
             String[] issuers = trustedIssuers.split(",");
 
             for (String trustedIssuer : issuers) {

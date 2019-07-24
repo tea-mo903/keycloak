@@ -143,7 +143,7 @@ public class PolicyEnforcer {
     }
 
     private Map<String, PathConfig> configurePaths(ProtectedResource protectedResource, PolicyEnforcerConfig enforcerConfig) {
-        boolean loadPathsFromServer = true;
+        boolean loadPathsFromServer = !enforcerConfig.getLazyLoadPaths();
 
         for (PathConfig pathConfig : enforcerConfig.getPaths()) {
             if (!PolicyEnforcerConfig.EnforcementMode.DISABLED.equals(pathConfig.getEnforcementMode())) {
@@ -225,9 +225,10 @@ public class PolicyEnforcer {
             for (String id : protectedResource.findAll()) {
                 ResourceRepresentation resourceDescription = protectedResource.findById(id);
 
-                if (resourceDescription.getUri() != null) {
-                    PathConfig pathConfig = PathConfig.createPathConfig(resourceDescription);
-                    paths.put(pathConfig.getPath(), pathConfig);
+                if (resourceDescription.getUris() != null && !resourceDescription.getUris().isEmpty()) {
+                    for(PathConfig pathConfig : PathConfig.createPathConfigs(resourceDescription)) {
+                        paths.put(pathConfig.getPath(), pathConfig);
+                    }
                 }
             }
         }
@@ -271,7 +272,17 @@ public class PolicyEnforcer {
                         List<ResourceRepresentation> matchingResources = authzClient.protection().resource().findByMatchingUri(targetUri);
 
                         if (!matchingResources.isEmpty()) {
-                            pathConfig = PathConfig.createPathConfig(matchingResources.get(0));
+                            Map<String, Map<String, Object>> cipConfig = null;
+
+                            if (pathConfig != null) {
+                                cipConfig = pathConfig.getClaimInformationPointConfig();
+                            }
+
+                            pathConfig = PathConfig.createPathConfigs(matchingResources.get(0)).iterator().next();
+
+                            if (cipConfig != null) {
+                                pathConfig.setClaimInformationPointConfig(cipConfig);
+                            }
                         }
                     } catch (Exception cause) {
                         LOGGER.errorf(cause, "Could not lazy load resource with path [" + targetUri + "] from server");
@@ -295,20 +306,35 @@ public class PolicyEnforcer {
             return paths.values();
         }
 
+        public PathCache getPathCache() {
+            return pathCache;
+        }
+
         @Override
         protected PathConfig resolvePathConfig(PathConfig originalConfig, String path) {
             if (originalConfig.hasPattern()) {
                 ProtectedResource resource = authzClient.protection().resource();
+
+                // search by an exact match
                 List<ResourceRepresentation> search = resource.findByUri(path);
+
+                // if exact match not found, try to obtain from current path the parent path.
+                // if path is /resource/1/test and pattern from pathConfig is /resource/{id}/*, parent path is /resource/1
+                // this logic allows to match sub resources of a resource instance (/resource/1) to the parent resource,
+                // so any permission granted to parent also applies to sub resources
+                if (search.isEmpty()) {
+                    search = resource.findByUri(buildUriFromTemplate(originalConfig.getPath(), path, true));
+                }
 
                 if (!search.isEmpty()) {
                     ResourceRepresentation targetResource = search.get(0);
-                    PathConfig config = PathConfig.createPathConfig(targetResource);
+                    PathConfig config = PathConfig.createPathConfigs(targetResource).iterator().next();
 
                     config.setScopes(originalConfig.getScopes());
                     config.setMethods(originalConfig.getMethods());
                     config.setParentConfig(originalConfig);
                     config.setEnforcementMode(originalConfig.getEnforcementMode());
+                    config.setClaimInformationPointConfig(originalConfig.getClaimInformationPointConfig());
 
                     return config;
                 }

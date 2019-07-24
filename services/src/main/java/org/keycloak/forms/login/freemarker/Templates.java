@@ -56,6 +56,10 @@ public class Templates {
                 return "code.ftl";
             case LOGIN_PAGE_EXPIRED:
                 return "login-page-expired.ftl";
+            case X509_CONFIRM:
+                return "login-x509-info.ftl";
+            case SAML_POST_FORM:
+                return "saml-post-form.ftl";
             default:
                 throw new IllegalArgumentException();
         }

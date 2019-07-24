@@ -174,7 +174,6 @@ public class ClientManager {
             ProtocolMapperModel protocolMapper = UserSessionNoteMapper.createClaimMapper(ServiceAccountConstants.CLIENT_ID_PROTOCOL_MAPPER,
                     ServiceAccountConstants.CLIENT_ID,
                     ServiceAccountConstants.CLIENT_ID, "String",
-                    false, "",
                     true, true);
             client.addProtocolMapper(protocolMapper);
         }
@@ -185,7 +184,6 @@ public class ClientManager {
             ProtocolMapperModel protocolMapper = UserSessionNoteMapper.createClaimMapper(ServiceAccountConstants.CLIENT_HOST_PROTOCOL_MAPPER,
                     ServiceAccountConstants.CLIENT_HOST,
                     ServiceAccountConstants.CLIENT_HOST, "String",
-                    false, "",
                     true, true);
             client.addProtocolMapper(protocolMapper);
         }
@@ -195,7 +193,6 @@ public class ClientManager {
             ProtocolMapperModel protocolMapper = UserSessionNoteMapper.createClaimMapper(ServiceAccountConstants.CLIENT_ADDRESS_PROTOCOL_MAPPER,
                     ServiceAccountConstants.CLIENT_ADDRESS,
                     ServiceAccountConstants.CLIENT_ADDRESS, "String",
-                    false, "",
                     true, true);
             client.addProtocolMapper(protocolMapper);
         }
@@ -213,7 +210,7 @@ public class ClientManager {
     }
 
     @JsonPropertyOrder({"realm", "realm-public-key", "bearer-only", "auth-server-url", "ssl-required",
-            "resource", "public-client", "credentials",
+            "resource", "public-client", "verify-token-audience", "credentials",
             "use-resource-role-mappings"})
     public static class InstallationAdapterConfig extends BaseRealmConfig {
         @JsonProperty("resource")
@@ -226,6 +223,8 @@ public class ClientManager {
         protected Boolean publicClient;
         @JsonProperty("credentials")
         protected Map<String, Object> credentials;
+        @JsonProperty("verify-token-audience")
+        protected Boolean verifyTokenAudience;
         @JsonProperty("policy-enforcer")
         protected PolicyEnforcerConfig enforcerConfig;
 
@@ -251,6 +250,14 @@ public class ClientManager {
 
         public void setCredentials(Map<String, Object> credentials) {
             this.credentials = credentials;
+        }
+
+        public Boolean getVerifyTokenAudience() {
+            return verifyTokenAudience;
+        }
+
+        public void setVerifyTokenAudience(Boolean verifyTokenAudience) {
+            this.verifyTokenAudience = verifyTokenAudience;
         }
 
         public Boolean getPublicClient() {

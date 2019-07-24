@@ -86,12 +86,8 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
+import static org.hamcrest.Matchers.is;
+import static org.junit.Assert.*;
 import static org.keycloak.testsuite.Assert.assertNames;
 
 /**
@@ -232,6 +228,34 @@ public class UserTest extends AbstractAdminTest {
         assertEquals("theSalt", new String(credentialHashed.getSalt()));
         assertEquals(CredentialRepresentation.PASSWORD, credentialHashed.getType());
     }
+    
+    @Test
+    public void updateUserWithHashedCredentials(){
+        String userId = createUser("user_hashed_creds", "user_hashed_creds@localhost");
+
+        CredentialRepresentation hashedPassword = new CredentialRepresentation();
+        hashedPassword.setAlgorithm("pbkdf2-sha256");
+        hashedPassword.setCreatedDate(1001l);
+        hashedPassword.setHashIterations(27500);
+        hashedPassword.setHashedSaltedValue("uskEPZWMr83pl2mzNB95SFXfIabe2UH9ClENVx/rrQqOjFEjL2aAOGpWsFNNF3qoll7Qht2mY5KxIDm3Rnve2w==");
+        hashedPassword.setSalt("u1VXYxqVfWOzHpF2bGSLyA==");
+        hashedPassword.setType(CredentialRepresentation.PASSWORD);
+        
+        UserRepresentation userRepresentation = new UserRepresentation();
+        userRepresentation.setCredentials(Collections.singletonList(hashedPassword));
+        
+        realm.users().get(userId).update(userRepresentation);
+
+        String accountUrl = RealmsResource.accountUrl(UriBuilder.fromUri(getAuthServerRoot())).build(REALM_NAME).toString();
+
+        driver.navigate().to(accountUrl);
+
+        assertEquals("Log In", PageUtils.getPageTitle(driver));
+
+        loginPage.login("user_hashed_creds", "admin");
+
+        assertTrue(driver.getTitle().contains("Account Management"));
+    }
 
     @Test
     public void createUserWithRawCredentials() {
@@ -323,6 +347,13 @@ public class UserTest extends AbstractAdminTest {
 
         assertAdminEvents.assertEmpty();
 
+    }
+    
+    // KEYCLOAK-7015
+    @Test
+    public void createTwoUsersWithEmptyStringEmails() {
+        createUser("user1", "");
+        createUser("user2", "");
     }
 
     @Test
@@ -678,7 +709,7 @@ public class UserTest extends AbstractAdminTest {
             assertEquals(400, e.getResponse().getStatus());
 
             ErrorRepresentation error = e.getResponse().readEntity(ErrorRepresentation.class);
-            Assert.assertEquals("invalidClientId not enabled", error.getErrorMessage());
+            Assert.assertEquals("Client doesn't exist", error.getErrorMessage());
         }
     }
 
@@ -1077,7 +1108,7 @@ public class UserTest extends AbstractAdminTest {
             assertEquals(400, e.getResponse().getStatus());
 
             ErrorRepresentation error = e.getResponse().readEntity(ErrorRepresentation.class);
-            Assert.assertEquals("invalidClientId not enabled", error.getErrorMessage());
+            Assert.assertEquals("Client doesn't exist", error.getErrorMessage());
         }
 
         user.sendVerifyEmail();
@@ -1214,6 +1245,44 @@ public class UserTest extends AbstractAdminTest {
     }
 
     @Test
+    public void updateUserWithRawCredentials() {
+        UserRepresentation user = new UserRepresentation();
+        user.setUsername("user_rawpw");
+        user.setEmail("email.raw@localhost");
+
+        CredentialRepresentation rawPassword = new CredentialRepresentation();
+        rawPassword.setValue("ABCD");
+        rawPassword.setType(CredentialRepresentation.PASSWORD);
+        user.setCredentials(Arrays.asList(rawPassword));
+
+        String id = createUser(user);
+
+        CredentialModel credential = fetchCredentials("user_rawpw");
+        assertNotNull("Expecting credential", credential);
+        assertEquals(PasswordPolicy.HASH_ALGORITHM_DEFAULT, credential.getAlgorithm());
+        assertEquals(PasswordPolicy.HASH_ITERATIONS_DEFAULT, credential.getHashIterations());
+        assertNotEquals("ABCD", credential.getValue());
+        assertEquals(CredentialRepresentation.PASSWORD, credential.getType());
+
+        UserResource userResource = realm.users().get(id);
+        UserRepresentation userRep = userResource.toRepresentation();
+
+        CredentialRepresentation rawPasswordForUpdate = new CredentialRepresentation();
+        rawPasswordForUpdate.setValue("EFGH");
+        rawPasswordForUpdate.setType(CredentialRepresentation.PASSWORD);
+        userRep.setCredentials(Arrays.asList(rawPasswordForUpdate));
+
+        updateUser(userResource, userRep);
+
+        CredentialModel updatedCredential = fetchCredentials("user_rawpw");
+        assertNotNull("Expecting credential", updatedCredential);
+        assertEquals(PasswordPolicy.HASH_ALGORITHM_DEFAULT, updatedCredential.getAlgorithm());
+        assertEquals(PasswordPolicy.HASH_ITERATIONS_DEFAULT, updatedCredential.getHashIterations());
+        assertNotEquals("EFGH", updatedCredential.getValue());
+        assertEquals(CredentialRepresentation.PASSWORD, updatedCredential.getType());
+    }
+
+    @Test
     public void resetUserPassword() {
         String userId = createUser("user1", "user1@localhost");
 
@@ -1271,7 +1340,7 @@ public class UserTest extends AbstractAdminTest {
 
         // Remove UPDATE_PASSWORD default action
         updatePasswordReqAction = realm.flows().getRequiredAction(UserModel.RequiredAction.UPDATE_PASSWORD.toString());
-        updatePasswordReqAction.setDefaultAction(true);
+        updatePasswordReqAction.setDefaultAction(false);
         realm.flows().updateRequiredAction(UserModel.RequiredAction.UPDATE_PASSWORD.toString(), updatePasswordReqAction);
         assertAdminEvents.assertEvent(realmId, OperationType.UPDATE, AdminEventPaths.authRequiredActionPath(UserModel.RequiredAction.UPDATE_PASSWORD.toString()), updatePasswordReqAction, ResourceType.REQUIRED_ACTION);
     }
@@ -1327,7 +1396,7 @@ public class UserTest extends AbstractAdminTest {
 
         // List realm roles
         assertNames(roles.realmLevel().listAll(), "realm-role", "realm-composite", "user", "offline_access", Constants.AUTHZ_UMA_AUTHORIZATION);
-        assertNames(roles.realmLevel().listAvailable(), "admin", "customer-user-premium", "realm-composite-role", "sample-realm-role");
+        assertNames(roles.realmLevel().listAvailable(), "admin", "customer-user-premium", "realm-composite-role", "sample-realm-role", "attribute-role");
         assertNames(roles.realmLevel().listEffective(), "realm-role", "realm-composite", "realm-child", "user", "offline_access", Constants.AUTHZ_UMA_AUTHORIZATION);
 
         // List client roles
@@ -1362,12 +1431,34 @@ public class UserTest extends AbstractAdminTest {
         UsersResource users = adminClient.realms().realm("test").users();
 
         for (int i = 0; i < 110; i++) {
-            users.create(UserBuilder.create().username("test-" + i).build()).close();
+            users.create(UserBuilder.create().username("test-" + i).addAttribute("aName", "aValue").build()).close();
         }
 
-        assertEquals(100, users.search("test", null, null).size());
+        List<UserRepresentation> result = users.search("test", null, null);
+        assertEquals(100, result.size());
+        for (UserRepresentation user : result) {
+            assertThat(user.getAttributes(), Matchers.notNullValue());
+            assertThat(user.getAttributes().keySet(), Matchers.hasSize(1));
+            assertThat(user.getAttributes(), Matchers.hasEntry(is("aName"), Matchers.contains("aValue")));
+        }
+
         assertEquals(105, users.search("test", 0, 105).size());
         assertEquals(111, users.search("test", 0, 1000).size());
+    }
+
+    @Test
+    public void defaultMaxResultsBrief() {
+        UsersResource users = adminClient.realms().realm("test").users();
+
+        for (int i = 0; i < 110; i++) {
+            users.create(UserBuilder.create().username("test-" + i).addAttribute("aName", "aValue").build()).close();
+        }
+
+        List<UserRepresentation> result = users.search("test", null, null, true);
+        assertEquals(100, result.size());
+        for (UserRepresentation user : result) {
+            assertThat(user.getAttributes(), Matchers.nullValue());
+        }
     }
 
     private void switchEditUsernameAllowedOn(boolean enable) {

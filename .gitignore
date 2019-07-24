@@ -1,3 +1,7 @@
+# OS stuff
+###################
+.DS_Store
+
 # Intellij
 ###################
 .idea
@@ -8,6 +12,11 @@
 .project
 .settings
 .classpath
+# reverting this as e.g. /distribution/feature-packs/server-feature-pack/src/main/resources/content/bin/
+# should not be ignored
+#bin/
+.factorypath
+
 
 # NetBeans #
 ############
@@ -55,3 +64,7 @@ target
 # KEYCLOAK-5391: We will re-exclude node_modules when node_modules handling is worked out.
 # For now, we keep our js libraries checked into GitHub, so we don't ignore.
 #node_modules
+
+# testsuite #
+#############
+*offline-token.txt

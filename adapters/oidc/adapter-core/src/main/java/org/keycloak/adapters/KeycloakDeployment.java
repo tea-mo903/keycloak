@@ -32,6 +32,7 @@ import org.keycloak.representations.adapters.config.AdapterConfig;
 import java.net.URI;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.Callable;
 
 /**
  * @author <a href="mailto:bill@burkecentral.com">Bill Burke</a>
@@ -64,12 +65,13 @@ public class KeycloakDeployment {
     protected boolean publicClient;
     protected Map<String, Object> resourceCredentials = new HashMap<>();
     protected ClientCredentialsProvider clientAuthenticator;
-    protected HttpClient client;
+    protected Callable<HttpClient> client;
 
     protected String scope;
     protected SslRequired sslRequired = SslRequired.ALL;
     protected int confidentialPort = -1;
     protected TokenStore tokenStore = TokenStore.SESSION;
+    protected String adapterStateCookiePath = "";
     protected String stateCookieName = "OAuth_Token_Request_State";
     protected boolean useResourceRoleMappings;
     protected boolean cors;
@@ -87,15 +89,16 @@ public class KeycloakDeployment {
     protected int tokenMinimumTimeToLive;
     protected int minTimeBetweenJwksRequests;
     protected int publicKeyCacheTtl;
-    private PolicyEnforcer policyEnforcer;
+    protected Callable<PolicyEnforcer> policyEnforcer;
 
     // https://tools.ietf.org/html/rfc7636
     protected boolean pkce = false;
     protected boolean ignoreOAuthQueryParameter;
-    
+
     protected Map<String, String> redirectRewriteRules;
 
     protected boolean delegateBearerErrorResponseSending = false;
+    protected boolean verifyTokenAudience = false;
 
     public KeycloakDeployment() {
     }
@@ -257,11 +260,20 @@ public class KeycloakDeployment {
     }
 
     public HttpClient getClient() {
-        return client;
+        try {
+            return client.call();
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 
-    public void setClient(HttpClient client) {
-        this.client = client;
+    public void setClient(final HttpClient client) {
+        this.client = new Callable<HttpClient>() {
+            @Override
+            public HttpClient call() {
+                return client;
+            }
+        };
     }
 
     public String getScope() {
@@ -280,6 +292,13 @@ public class KeycloakDeployment {
         this.sslRequired = sslRequired;
     }
 
+    public boolean isSSLEnabled() {
+        if (SslRequired.NONE == sslRequired) {
+            return false;
+        }
+        return true;
+    }
+
     public int getConfidentialPort() {
         return confidentialPort;
     }
@@ -294,6 +313,14 @@ public class KeycloakDeployment {
 
     public void setTokenStore(TokenStore tokenStore) {
         this.tokenStore = tokenStore;
+    }
+
+    public String getAdapterStateCookiePath() {
+        return adapterStateCookiePath;
+    }
+
+    public void setAdapterStateCookiePath(String adapterStateCookiePath) {
+        this.adapterStateCookiePath = adapterStateCookiePath;
     }
 
     public String getStateCookieName() {
@@ -437,12 +464,19 @@ public class KeycloakDeployment {
         this.publicKeyCacheTtl = publicKeyCacheTtl;
     }
 
-    public void setPolicyEnforcer(PolicyEnforcer policyEnforcer) {
+    public void setPolicyEnforcer(Callable<PolicyEnforcer> policyEnforcer) {
         this.policyEnforcer = policyEnforcer;
     }
 
     public PolicyEnforcer getPolicyEnforcer() {
-        return policyEnforcer;
+        if (policyEnforcer == null) {
+            return null;
+        }
+        try {
+            return policyEnforcer.call();
+        } catch (Exception cause) {
+            throw new RuntimeException("Failed to obtain policy enforcer", cause);
+        }
     }
 
     // https://tools.ietf.org/html/rfc7636
@@ -476,5 +510,17 @@ public class KeycloakDeployment {
 
     public void setDelegateBearerErrorResponseSending(boolean delegateBearerErrorResponseSending) {
         this.delegateBearerErrorResponseSending = delegateBearerErrorResponseSending;
+    }
+
+    public boolean isVerifyTokenAudience() {
+        return verifyTokenAudience;
+    }
+
+    public void setVerifyTokenAudience(boolean verifyTokenAudience) {
+        this.verifyTokenAudience = verifyTokenAudience;
+    }
+
+    public void setClient(Callable<HttpClient> callable) {
+        client = callable;
     }
 }

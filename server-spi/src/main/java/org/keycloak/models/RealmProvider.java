@@ -19,7 +19,6 @@ package org.keycloak.models;
 
 import org.keycloak.migration.MigrationModel;
 import org.keycloak.provider.Provider;
-import org.keycloak.storage.client.ClientLookupProvider;
 
 import java.util.List;
 import java.util.Set;
@@ -44,6 +43,8 @@ public interface RealmProvider extends Provider, ClientProvider {
     Long getGroupsCount(RealmModel realm, Boolean onlyTopGroups);
 
     Long getGroupsCountByNameContaining(RealmModel realm, String search);
+    
+    List<GroupModel> getGroupsByRole(RealmModel realm, RoleModel role, int firstResult, int maxResults);
 
     List<GroupModel> getTopLevelGroups(RealmModel realm);
 
@@ -72,12 +73,13 @@ public interface RealmProvider extends Provider, ClientProvider {
 
     RoleModel getRoleById(String id, RealmModel realm);
 
-    ClientTemplateModel getClientTemplateById(String id, RealmModel realm);
+    ClientScopeModel getClientScopeById(String id, RealmModel realm);
     GroupModel getGroupById(String id, RealmModel realm);
 
 
 
     List<RealmModel> getRealms();
+    List<RealmModel> getRealmsWithProviderType(Class<?> type);
     boolean removeRealm(String id);
     void close();
 

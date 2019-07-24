@@ -19,18 +19,21 @@ package org.keycloak.testsuite.admin.client.authorization;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertThat;
 
-import java.io.IOException;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
+import org.hamcrest.Matchers;
 import org.junit.Test;
 import org.keycloak.authorization.client.AuthzClient;
-import org.keycloak.authorization.client.Configuration;
 import org.keycloak.representations.idm.authorization.ResourceRepresentation;
 import org.keycloak.representations.idm.authorization.ScopeRepresentation;
-import org.keycloak.util.JsonSerialization;
 
 /**
  *
@@ -44,7 +47,9 @@ public class ResourceManagementWithAuthzClientTest extends ResourceManagementTes
     public void testFindMatchingUri() {
         doCreateResource(new ResourceRepresentation("/*", Collections.emptySet(), "/*", null));
         doCreateResource(new ResourceRepresentation("/resources/*", Collections.emptySet(), "/resources/*", null));
-        doCreateResource(new ResourceRepresentation("/resources/{pattern}/*", Collections.emptySet(), "/resources/{pattern}/*", null));
+        doCreateResource(new ResourceRepresentation("/resources-a/*", Collections.emptySet(), "/resources-a/*", null));
+        doCreateResource(new ResourceRepresentation("/resources-b/{pattern}", Collections.emptySet(), "/resources-b/{pattern}", null));
+        doCreateResource(new ResourceRepresentation("/resources-c/{pattern}/*", Collections.emptySet(), "/resources-c/{pattern}/*", null));
         doCreateResource(new ResourceRepresentation("/resources/{pattern}/{pattern}/*", Collections.emptySet(), "/resources/{pattern}/{pattern}/*", null));
         doCreateResource(new ResourceRepresentation("/resources/{pattern}/sub-resources/{pattern}/*", Collections.emptySet(), "/resources/{pattern}/sub-resources/{pattern}/*", null));
         doCreateResource(new ResourceRepresentation("/resources/{pattern}/sub-resource", Collections.emptySet(), "/resources/{pattern}/sub-resources/{pattern}/*", null));
@@ -57,11 +62,11 @@ public class ResourceManagementWithAuthzClientTest extends ResourceManagementTes
         assertEquals(1, resources.size());
         assertEquals("/*", resources.get(0).getUri());
 
-        resources = authzClient.protection().resource().findByMatchingUri("/resources/test");
+        resources = authzClient.protection().resource().findByMatchingUri("/resources-a/test");
 
         assertNotNull(resources);
         assertEquals(1, resources.size());
-        assertEquals("/resources/*", resources.get(0).getUri());
+        assertEquals("/resources-a/*", resources.get(0).getUri());
 
         resources = authzClient.protection().resource().findByMatchingUri("/resources");
 
@@ -69,11 +74,17 @@ public class ResourceManagementWithAuthzClientTest extends ResourceManagementTes
         assertEquals(1, resources.size());
         assertEquals("/resources/*", resources.get(0).getUri());
 
-        resources = authzClient.protection().resource().findByMatchingUri("/resources/a/b");
+        resources = authzClient.protection().resource().findByMatchingUri("/resources-b/a");
 
         assertNotNull(resources);
         assertEquals(1, resources.size());
-        assertEquals("/resources/{pattern}/*", resources.get(0).getUri());
+        assertEquals("/resources-b/{pattern}", resources.get(0).getUri());
+
+        resources = authzClient.protection().resource().findByMatchingUri("/resources-c/a/b");
+
+        assertNotNull(resources);
+        assertEquals(1, resources.size());
+        assertEquals("/resources-c/{pattern}/*", resources.get(0).getUri());
 
         resources = authzClient.protection().resource().findByMatchingUri("/resources/a/b/c");
 
@@ -86,6 +97,36 @@ public class ResourceManagementWithAuthzClientTest extends ResourceManagementTes
         assertNotNull(resources);
         assertEquals(1, resources.size());
         assertEquals("/resources/{pattern}/sub-resources/{pattern}/*", resources.get(0).getUri());
+    }
+
+    @Test
+    public void testFindDeep() {
+        ResourceRepresentation resource1 = new ResourceRepresentation("/*", new HashSet<>());
+
+        resource1.addScope("a", "b", "c");
+        resource1.setType("type");
+
+        Map<String, List<String>> attributes = new HashMap<>();
+
+        attributes.put("a", Arrays.asList("a"));
+        attributes.put("b", Arrays.asList("b"));
+        attributes.put("c", Arrays.asList("c"));
+
+        resource1.setAttributes(attributes);
+
+        resource1.setIconUri("icon");
+        resource1.setUris(new HashSet<>(Arrays.asList("/a", "/b", "/c")));
+
+        ResourceRepresentation resource = doCreateResource(resource1);
+        AuthzClient authzClient = getAuthzClient();
+        List<ResourceRepresentation> representations = authzClient.protection().resource().find(resource.getId(), null, null, null, null, null, false, true,null, null);
+
+        assertEquals(1, representations.size());
+        assertEquals(resource.getId(), representations.get(0).getId());
+        assertEquals(resource.getName(), representations.get(0).getName());
+        assertEquals(resource.getIconUri(), representations.get(0).getIconUri());
+        assertThat(resource.getUris(), Matchers.containsInAnyOrder(representations.get(0).getUris().toArray()));
+        assertThat(resource.getAttributes().entrySet(), Matchers.containsInAnyOrder(representations.get(0).getAttributes().entrySet().toArray()));
     }
 
     @Override
@@ -119,7 +160,7 @@ public class ResourceManagementWithAuthzClientTest extends ResourceManagementTes
         resourceRepresentation.setId(created.getId());
         resourceRepresentation.setName(created.getName());
         resourceRepresentation.setIconUri(created.getIconUri());
-        resourceRepresentation.setUri(created.getUri());
+        resourceRepresentation.setUris(created.getUris());
         resourceRepresentation.setType(created.getType());
         resourceRepresentation.setOwner(created.getOwner());
         resourceRepresentation.setScopes(created.getScopes().stream().map(scopeRepresentation -> {
@@ -143,7 +184,13 @@ public class ResourceManagementWithAuthzClientTest extends ResourceManagementTes
         resource.setId(newResource.getId());
         resource.setName(newResource.getName());
         resource.setIconUri(newResource.getIconUri());
-        resource.setUri(newResource.getUri());
+
+        if (newResource.getUris() != null && !newResource.getUris().isEmpty()) {
+            resource.setUris(newResource.getUris());
+        } else {
+            resource.setUri(newResource.getUri());
+        }
+
         resource.setType(newResource.getType());
 
         if (newResource.getOwner() != null) {
@@ -161,16 +208,13 @@ public class ResourceManagementWithAuthzClientTest extends ResourceManagementTes
 
         resource.setAttributes(newResource.getAttributes());
 
+
         return resource;
     }
 
     private AuthzClient getAuthzClient() {
         if (authzClient == null) {
-            try {
-                authzClient = AuthzClient.create(JsonSerialization.readValue(getClass().getResourceAsStream("/authorization-test/default-keycloak.json"), Configuration.class));
-            } catch (IOException cause) {
-                throw new RuntimeException("Failed to create authz client", cause);
-            }
+            authzClient = AuthzClient.create(getClass().getResourceAsStream("/authorization-test/default-keycloak.json"));
         }
 
         return authzClient;

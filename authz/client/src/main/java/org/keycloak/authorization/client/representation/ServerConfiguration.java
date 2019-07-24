@@ -18,11 +18,13 @@ package org.keycloak.authorization.client.representation;
 
 import java.util.List;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 /**
  * @author <a href="mailto:psilva@redhat.com">Pedro Igor</a>
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class ServerConfiguration {
 
     @JsonProperty("issuer")
@@ -102,6 +104,9 @@ public class ServerConfiguration {
 
     @JsonProperty("permission_endpoint")
     private String permissionEndpoint;
+    
+    @JsonProperty("policy_endpoint")
+    private String policyEndpoint;
 
     public String getIssuer() {
         return issuer;
@@ -205,5 +210,9 @@ public class ServerConfiguration {
 
     public String getPermissionEndpoint() {
         return permissionEndpoint;
+    }
+    
+    public String getPolicyEndpoint() {
+        return policyEndpoint;
     }
 }

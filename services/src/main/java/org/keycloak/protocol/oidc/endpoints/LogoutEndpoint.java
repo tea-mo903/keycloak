@@ -43,11 +43,11 @@ import org.keycloak.services.managers.AuthenticationManager;
 import org.keycloak.services.managers.UserSessionManager;
 import org.keycloak.services.messages.Messages;
 import org.keycloak.services.resources.Cors;
+import org.keycloak.services.util.MtlsHoKTokenUtil;
 import org.keycloak.util.TokenUtil;
 
 import javax.ws.rs.Consumes;
 import javax.ws.rs.GET;
-import javax.ws.rs.HeaderParam;
 import javax.ws.rs.POST;
 import javax.ws.rs.QueryParam;
 import javax.ws.rs.core.Context;
@@ -56,7 +56,6 @@ import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.MultivaluedMap;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.UriBuilder;
-import javax.ws.rs.core.UriInfo;
 
 /**
  * @author <a href="mailto:sthorger@redhat.com">Stian Thorgersen</a>
@@ -76,9 +75,6 @@ public class LogoutEndpoint {
     @Context
     private HttpHeaders headers;
 
-    @Context
-    private UriInfo uriInfo;
-
     private TokenManager tokenManager;
     private RealmModel realm;
     private EventBuilder event;
@@ -92,7 +88,11 @@ public class LogoutEndpoint {
     /**
      * Logout user session.  User must be logged in via a session cookie.
      *
+     * When the logout is initiated by a remote idp, the parameter "initiating_idp" can be supplied. This param will
+     * prevent upstream logout (since the logout procedure has already been started in the remote idp).
+     *
      * @param redirectUri
+     * @param initiatingIdp The alias of the idp initiating the logout.
      * @return
      */
     @GET
@@ -100,11 +100,12 @@ public class LogoutEndpoint {
     public Response logout(@QueryParam(OIDCLoginProtocol.REDIRECT_URI_PARAM) String redirectUri, // deprecated
                            @QueryParam("id_token_hint") String encodedIdToken,
                            @QueryParam("post_logout_redirect_uri") String postLogoutRedirectUri,
-                           @QueryParam("state") String state) {
+                           @QueryParam("state") String state,
+                           @QueryParam("initiating_idp") String initiatingIdp) {
         String redirect = postLogoutRedirectUri != null ? postLogoutRedirectUri : redirectUri;
 
         if (redirect != null) {
-            String validatedUri = RedirectUtils.verifyRealmRedirectUri(uriInfo, redirect, realm);
+            String validatedUri = RedirectUtils.verifyRealmRedirectUri(session.getContext().getUri(), redirect, realm);
             if (validatedUri == null) {
                 event.event(EventType.LOGOUT);
                 event.detail(Details.REDIRECT_URI, redirect);
@@ -117,8 +118,12 @@ public class LogoutEndpoint {
         UserSessionModel userSession = null;
         if (encodedIdToken != null) {
             try {
-                IDToken idToken = tokenManager.verifyIDTokenSignature(session, realm, encodedIdToken);
+                IDToken idToken = tokenManager.verifyIDTokenSignature(session, encodedIdToken);
                 userSession = session.sessions().getUserSession(realm, idToken.getSessionState());
+
+                if (userSession != null) {
+                    checkTokenIssuedAt(idToken, userSession);
+                }
             } catch (OAuthErrorException e) {
                 event.event(EventType.LOGOUT);
                 event.error(Errors.INVALID_TOKEN);
@@ -134,12 +139,12 @@ public class LogoutEndpoint {
             if (state != null) userSession.setNote(OIDCLoginProtocol.LOGOUT_STATE_PARAM, state);
             userSession.setNote(AuthenticationManager.KEYCLOAK_LOGOUT_PROTOCOL, OIDCLoginProtocol.LOGIN_PROTOCOL);
             logger.debug("Initiating OIDC browser logout");
-            Response response =  AuthenticationManager.browserLogout(session, realm, authResult.getSession(), uriInfo, clientConnection, headers);
+            Response response =  AuthenticationManager.browserLogout(session, realm, authResult.getSession(), session.getContext().getUri(), clientConnection, headers, initiatingIdp);
             logger.debug("finishing OIDC browser logout");
             return response;
         } else if (userSession != null) { // non browser logout
             event.event(EventType.LOGOUT);
-            AuthenticationManager.backchannelLogout(session, realm, userSession, uriInfo, clientConnection, headers, true);
+            AuthenticationManager.backchannelLogout(session, realm, userSession, session.getContext().getUri(), clientConnection, headers, true);
             event.user(userSession.getUser()).session(userSession).success();
         }
 
@@ -180,8 +185,11 @@ public class LogoutEndpoint {
             event.error(Errors.INVALID_TOKEN);
             throw new ErrorResponseException(OAuthErrorException.INVALID_REQUEST, "No refresh token", Response.Status.BAD_REQUEST);
         }
+
+        RefreshToken token = null;
         try {
-            RefreshToken token = tokenManager.verifyRefreshToken(session, realm, refreshToken, false);
+            // KEYCLOAK-6771 Certificate Bound Token
+            token = tokenManager.verifyRefreshToken(session, realm, client, request, refreshToken, false);
 
             boolean offline = TokenUtil.TOKEN_TYPE_OFFLINE.equals(token.getType());
 
@@ -194,17 +202,25 @@ public class LogoutEndpoint {
             }
 
             if (userSessionModel != null) {
+                checkTokenIssuedAt(token, userSessionModel);
                 logout(userSessionModel, offline);
             }
         } catch (OAuthErrorException e) {
-            event.error(Errors.INVALID_TOKEN);
-            throw new ErrorResponseException(e.getError(), e.getDescription(), Response.Status.BAD_REQUEST);
+            // KEYCLOAK-6771 Certificate Bound Token
+            if (MtlsHoKTokenUtil.CERT_VERIFY_ERROR_DESC.equals(e.getDescription())) {
+                event.error(Errors.NOT_ALLOWED);
+                throw new ErrorResponseException(e.getError(), e.getDescription(), Response.Status.UNAUTHORIZED);
+            } else {
+                event.error(Errors.INVALID_TOKEN);
+                throw new ErrorResponseException(e.getError(), e.getDescription(), Response.Status.BAD_REQUEST);
+            }
         }
-        return Cors.add(request, Response.noContent()).auth().allowedOrigins(uriInfo, client).allowedMethods("POST").exposedHeaders(Cors.ACCESS_CONTROL_ALLOW_METHODS).build();
+
+        return Cors.add(request, Response.noContent()).auth().allowedOrigins(session.getContext().getUri(), client).allowedMethods("POST").exposedHeaders(Cors.ACCESS_CONTROL_ALLOW_METHODS).build();
     }
 
     private void logout(UserSessionModel userSession, boolean offline) {
-        AuthenticationManager.backchannelLogout(session, realm, userSession, uriInfo, clientConnection, headers, true, offline);
+        AuthenticationManager.backchannelLogout(session, realm, userSession, session.getContext().getUri(), clientConnection, headers, true, offline);
         event.user(userSession.getUser()).session(userSession).success();
     }
 
@@ -212,16 +228,21 @@ public class LogoutEndpoint {
         ClientModel client = AuthorizeClientUtil.authorizeClient(session, event).getClient();
 
         if (client.isBearerOnly()) {
-            throw new ErrorResponseException("invalid_client", "Bearer-only not allowed", Response.Status.BAD_REQUEST);
+            throw new ErrorResponseException(Errors.INVALID_CLIENT, "Bearer-only not allowed", Response.Status.BAD_REQUEST);
         }
 
         return client;
     }
 
     private void checkSsl() {
-        if (!uriInfo.getBaseUri().getScheme().equals("https") && realm.getSslRequired().isRequired(clientConnection)) {
+        if (!session.getContext().getUri().getBaseUri().getScheme().equals("https") && realm.getSslRequired().isRequired(clientConnection)) {
             throw new ErrorResponseException("invalid_request", "HTTPS required", Response.Status.FORBIDDEN);
         }
     }
 
+    private void checkTokenIssuedAt(IDToken token, UserSessionModel userSession) throws OAuthErrorException {
+        if (token.getIssuedAt() + 1 < userSession.getStarted()) {
+            throw new OAuthErrorException(OAuthErrorException.INVALID_GRANT, "Refresh toked issued before the user session started");
+        }
+    }
 }

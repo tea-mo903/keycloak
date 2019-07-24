@@ -33,8 +33,10 @@ import org.keycloak.forms.login.freemarker.model.ProfileBean;
 import org.keycloak.forms.login.freemarker.model.RealmBean;
 import org.keycloak.forms.login.freemarker.model.RegisterBean;
 import org.keycloak.forms.login.freemarker.model.RequiredActionUrlFormatterMethod;
+import org.keycloak.forms.login.freemarker.model.SAMLPostFormBean;
 import org.keycloak.forms.login.freemarker.model.TotpBean;
 import org.keycloak.forms.login.freemarker.model.UrlBean;
+import org.keycloak.forms.login.freemarker.model.X509ConfirmBean;
 import org.keycloak.models.*;
 import org.keycloak.models.utils.FormMessage;
 import org.keycloak.services.Urls;
@@ -45,7 +47,6 @@ import org.keycloak.theme.BrowserSecurityHeaderSetup;
 import org.keycloak.theme.FreeMarkerException;
 import org.keycloak.theme.FreeMarkerUtil;
 import org.keycloak.theme.Theme;
-import org.keycloak.theme.ThemeProvider;
 import org.keycloak.theme.beans.AdvancedMessageFormatterMethod;
 import org.keycloak.theme.beans.LocaleBean;
 import org.keycloak.theme.beans.MessageBean;
@@ -63,6 +64,7 @@ import java.net.URI;
 import java.text.MessageFormat;
 import java.util.*;
 
+
 import static org.keycloak.models.UserModel.RequiredAction.UPDATE_PASSWORD;
 
 /**
@@ -75,11 +77,8 @@ public class FreeMarkerLoginFormsProvider implements LoginFormsProvider {
     protected String accessCode;
     protected Response.Status status;
     protected javax.ws.rs.core.MediaType contentType;
-    protected List<RoleModel> realmRolesRequested;
-    protected MultivaluedMap<String, RoleModel> resourceRolesRequested;
-    protected List<ProtocolMapperModel> protocolMappersRequested;
-    protected Map<String, String> httpResponseHeaders = new HashMap<String, String>();
-    protected String accessRequestMessage;
+    protected List<ClientScopeModel> clientScopesRequested;
+    protected Map<String, String> httpResponseHeaders = new HashMap<>();
     protected URI actionUri;
     protected String execution;
 
@@ -99,12 +98,12 @@ public class FreeMarkerLoginFormsProvider implements LoginFormsProvider {
 
     protected UserModel user;
 
-    protected final Map<String, Object> attributes = new HashMap<String, Object>();
+    protected final Map<String, Object> attributes = new HashMap<>();
 
     public FreeMarkerLoginFormsProvider(KeycloakSession session, FreeMarkerUtil freeMarker) {
         this.session = session;
         this.freeMarker = freeMarker;
-        this.attributes.put("scripts", new LinkedList<String>());
+        this.attributes.put("scripts", new LinkedList<>());
         this.realm = session.getContext().getRealm();
         this.client = session.getContext().getClient();
         this.uriInfo = session.getContext().getUri();
@@ -202,11 +201,17 @@ public class FreeMarkerLoginFormsProvider implements LoginFormsProvider {
                 break;
             case OAUTH_GRANT:
                 attributes.put("oauth",
-                        new OAuthGrantBean(accessCode, client, realmRolesRequested, resourceRolesRequested, protocolMappersRequested, this.accessRequestMessage));
+                        new OAuthGrantBean(accessCode, client, clientScopesRequested));
                 attributes.put("advancedMsg", new AdvancedMessageFormatterMethod(locale, messagesBundle));
                 break;
             case CODE:
                 attributes.put(OAuth2Constants.CODE, new CodeBean(accessCode, messageType == MessageType.ERROR ? getFirstMessageUnformatted() : null));
+                break;
+            case X509_CONFIRM:
+                attributes.put("x509", new X509ConfirmBean(formData));
+                break;
+            case SAML_POST_FORM:
+                attributes.put("samlPost", new SAMLPostFormBean(formData));
                 break;
         }
 
@@ -346,7 +351,7 @@ public class FreeMarkerLoginFormsProvider implements LoginFormsProvider {
 
         Locale locale = session.getContext().resolveLocale(user);
         Properties messagesBundle = handleThemeResources(theme, locale);
-        FormMessage msg = new FormMessage(message, parameters);
+        FormMessage msg = new FormMessage(message, (Object[]) parameters);
         return formatMessage(msg, messagesBundle, locale);
     }
 
@@ -389,6 +394,9 @@ public class FreeMarkerLoginFormsProvider implements LoginFormsProvider {
                         case LOGIN:
                             b = UriBuilder.fromUri(Urls.realmLoginPage(baseUri, realm.getName()));
                             break;
+                        case X509_CONFIRM:
+                            b = UriBuilder.fromUri(Urls.realmLoginPage(baseUri, realm.getName()));
+                            break;
                         case REGISTER:
                             b = UriBuilder.fromUri(Urls.realmRegisterPage(baseUri, realm.getName()));
                             break;
@@ -403,6 +411,10 @@ public class FreeMarkerLoginFormsProvider implements LoginFormsProvider {
 
                 if (execution != null) {
                     b.queryParam(Constants.EXECUTION, execution);
+                }
+
+                if (authenticationSession != null && authenticationSession.getAuthNote(Constants.KEY) != null) {
+                    b.queryParam(Constants.KEY, authenticationSession.getAuthNote(Constants.KEY));
                 }
 
                 attributes.put("locale", new LocaleBean(realm, locale, b, messagesBundle));
@@ -506,6 +518,16 @@ public class FreeMarkerLoginFormsProvider implements LoginFormsProvider {
     @Override
     public Response createCode() {
         return createResponse(LoginFormsPages.CODE);
+    }
+
+    @Override
+    public Response createX509ConfirmPage() {
+        return createResponse(LoginFormsPages.X509_CONFIRM);
+    }
+
+    @Override
+    public Response createSamlPostForm() {
+        return createResponse(LoginFormsPages.SAML_POST_FORM);
     }
 
     protected void setMessage(MessageType type, String message, Object... parameters) {
@@ -613,17 +635,8 @@ public class FreeMarkerLoginFormsProvider implements LoginFormsProvider {
     }
 
     @Override
-    public LoginFormsProvider setAccessRequest(List<RoleModel> realmRolesRequested, MultivaluedMap<String, RoleModel> resourceRolesRequested,
-            List<ProtocolMapperModel> protocolMappersRequested) {
-        this.realmRolesRequested = realmRolesRequested;
-        this.resourceRolesRequested = resourceRolesRequested;
-        this.protocolMappersRequested = protocolMappersRequested;
-        return this;
-    }
-
-    @Override
-    public LoginFormsProvider setAccessRequest(String accessRequestMessage) {
-        this.accessRequestMessage = accessRequestMessage;
+    public LoginFormsProvider setAccessRequest(List<ClientScopeModel> clientScopesRequested) {
+        this.clientScopesRequested = clientScopesRequested;
         return this;
     }
 
@@ -638,14 +651,12 @@ public class FreeMarkerLoginFormsProvider implements LoginFormsProvider {
         this.status = status;
         return this;
     }
+
     @Override
     public LoginFormsProvider setMediaType(javax.ws.rs.core.MediaType type) {
         this.contentType = type;
         return this;
     }
-
-
-
 
     @Override
     public LoginFormsProvider setActionUri(URI actionUri) {

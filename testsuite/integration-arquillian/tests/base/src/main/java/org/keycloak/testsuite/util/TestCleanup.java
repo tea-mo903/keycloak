@@ -24,6 +24,7 @@ import javax.ws.rs.NotFoundException;
 import org.keycloak.admin.client.Keycloak;
 import org.keycloak.admin.client.resource.RealmResource;
 import org.keycloak.common.util.ConcurrentMultivaluedHashMap;
+import org.keycloak.testsuite.arquillian.TestContext;
 
 /**
  * Enlist resources to be cleaned after test method
@@ -36,20 +37,21 @@ public class TestCleanup {
     private static final String USER_IDS = "USER_IDS";
     private static final String COMPONENT_IDS = "COMPONENT_IDS";
     private static final String CLIENT_UUIDS = "CLIENT_UUIDS";
+    private static final String CLIENT_SCOPE_IDS = "CLIENT_SCOPE_IDS";
     private static final String ROLE_IDS = "ROLE_IDS";
     private static final String GROUP_IDS = "GROUP_IDS";
     private static final String AUTH_FLOW_IDS = "AUTH_FLOW_IDS";
     private static final String AUTH_CONFIG_IDS = "AUTH_CONFIG_IDS";
 
-    private final Keycloak adminClient;
+    private final TestContext testContext;
     private final String realmName;
 
     // Key is kind of entity (eg. "client", "role", "user" etc), Values are all kind of entities of given type to cleanup
     private ConcurrentMultivaluedHashMap<String, String> entities = new ConcurrentMultivaluedHashMap<>();
 
 
-    public TestCleanup(Keycloak adminClient, String realmName) {
-        this.adminClient = adminClient;
+    public TestCleanup(TestContext testContext, String realmName) {
+        this.testContext = testContext;
         this.realmName = realmName;
     }
 
@@ -74,6 +76,11 @@ public class TestCleanup {
     }
 
 
+    public void addClientScopeId(String clientScopeId) {
+        entities.add(CLIENT_SCOPE_IDS, clientScopeId);
+    }
+
+
     public void addRoleId(String roleId) {
         entities.add(ROLE_IDS, roleId);
     }
@@ -95,7 +102,7 @@ public class TestCleanup {
 
 
     public void executeCleanup() {
-        RealmResource realm = adminClient.realm(realmName);
+        RealmResource realm = getAdminClient().realm(realmName);
 
         List<String> userIds = entities.get(USER_IDS);
         if (userIds != null) {
@@ -135,6 +142,18 @@ public class TestCleanup {
             for (String clientUuId : clientUuids) {
                 try {
                     realm.clients().get(clientUuId).remove();
+                } catch (NotFoundException nfe) {
+                    // Idp might be already deleted in the test
+                }
+            }
+        }
+
+        // Client scopes should be after clients
+        List<String> clientScopeIds = entities.get(CLIENT_SCOPE_IDS);
+        if (clientScopeIds != null) {
+            for (String clientScopeId : clientScopeIds) {
+                try {
+                    realm.clientScopes().get(clientScopeId).remove();
                 } catch (NotFoundException nfe) {
                     // Idp might be already deleted in the test
                 }
@@ -184,6 +203,10 @@ public class TestCleanup {
                 }
             }
         }
+    }
+
+    private Keycloak getAdminClient() {
+        return testContext.getAdminClient();
     }
 
 }

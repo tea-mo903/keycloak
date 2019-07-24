@@ -26,8 +26,11 @@ import org.junit.Test;
 import org.keycloak.OAuth2Constants;
 import org.keycloak.admin.client.resource.RealmResource;
 import org.keycloak.authentication.authenticators.client.ClientIdAndSecretAuthenticator;
+import org.keycloak.crypto.Algorithm;
 import org.keycloak.events.Details;
 import org.keycloak.events.Errors;
+import org.keycloak.jose.jws.JWSHeader;
+import org.keycloak.jose.jws.JWSInput;
 import org.keycloak.models.UserModel;
 import org.keycloak.models.utils.KeycloakModelUtils;
 import org.keycloak.models.utils.TimeBasedOTP;
@@ -39,17 +42,20 @@ import org.keycloak.representations.idm.UserRepresentation;
 import org.keycloak.testsuite.AbstractKeycloakTest;
 import org.keycloak.testsuite.Assert;
 import org.keycloak.testsuite.AssertEvents;
+import org.keycloak.testsuite.admin.ApiUtil;
 import org.keycloak.testsuite.util.ClientBuilder;
 import org.keycloak.testsuite.util.ClientManager;
 import org.keycloak.testsuite.util.OAuthClient;
 import org.keycloak.testsuite.util.RealmBuilder;
 import org.keycloak.testsuite.util.RealmManager;
+import org.keycloak.testsuite.util.TokenSignatureUtil;
 import org.keycloak.testsuite.util.UserBuilder;
 import org.keycloak.testsuite.util.UserManager;
 
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 
 /**
  * @author <a href="mailto:sthorger@redhat.com">Stian Thorgersen</a>
@@ -191,7 +197,7 @@ public class ResourceOwnerPasswordCredentialsGrantTest extends AbstractKeycloakT
         assertEquals(200, response.getStatusCode());
 
         AccessToken accessToken = oauth.verifyToken(response.getAccessToken());
-        RefreshToken refreshToken = oauth.verifyRefreshToken(response.getRefreshToken());
+        RefreshToken refreshToken = oauth.parseRefreshToken(response.getRefreshToken());
 
         events.expectLogin()
                 .client(clientId)
@@ -213,7 +219,80 @@ public class ResourceOwnerPasswordCredentialsGrantTest extends AbstractKeycloakT
         OAuthClient.AccessTokenResponse refreshedResponse = oauth.doRefreshTokenRequest(response.getRefreshToken(), "secret");
 
         AccessToken refreshedAccessToken = oauth.verifyToken(refreshedResponse.getAccessToken());
-        RefreshToken refreshedRefreshToken = oauth.verifyRefreshToken(refreshedResponse.getRefreshToken());
+        RefreshToken refreshedRefreshToken = oauth.parseRefreshToken(refreshedResponse.getRefreshToken());
+
+        assertEquals(accessToken.getSessionState(), refreshedAccessToken.getSessionState());
+        assertEquals(accessToken.getSessionState(), refreshedRefreshToken.getSessionState());
+
+        events.expectRefresh(refreshToken.getId(), refreshToken.getSessionState()).user(userId).client(clientId).assertEvent();
+    }
+
+    @Test
+    public void grantRequest_ClientES256_RealmPS256() throws Exception {
+    	conductGrantRequest(Algorithm.HS256, Algorithm.ES256, Algorithm.PS256);
+    }
+
+    @Test
+    public void grantRequest_ClientPS256_RealmES256() throws Exception {
+    	conductGrantRequest(Algorithm.HS256, Algorithm.PS256, Algorithm.ES256);
+    }
+
+    private void conductGrantRequest(String expectedRefreshAlg, String expectedAccessAlg, String realmTokenAlg) throws Exception {
+        try {
+            TokenSignatureUtil.changeRealmTokenSignatureProvider(adminClient, realmTokenAlg);
+            TokenSignatureUtil.changeClientAccessTokenSignatureProvider(ApiUtil.findClientByClientId(adminClient.realm("test"), "resource-owner"), expectedAccessAlg);
+            grantRequest(expectedRefreshAlg, expectedAccessAlg);
+        } finally {
+            TokenSignatureUtil.changeRealmTokenSignatureProvider(adminClient, Algorithm.RS256);
+            TokenSignatureUtil.changeClientAccessTokenSignatureProvider(ApiUtil.findClientByClientId(adminClient.realm("test"), "resource-owner"), Algorithm.RS256);
+        }
+        return;
+    }
+
+    private void grantRequest(String expectedRefreshAlg, String expectedAccessAlg) throws Exception {
+        String clientId = "resource-owner";
+        String login = "direct-login";
+
+        oauth.clientId(clientId);
+
+        OAuthClient.AccessTokenResponse response = oauth.doGrantAccessTokenRequest("secret", login, "password", null);
+
+        assertEquals(200, response.getStatusCode());
+
+        AccessToken accessToken = oauth.verifyToken(response.getAccessToken());
+        RefreshToken refreshToken = oauth.parseRefreshToken(response.getRefreshToken());
+        JWSHeader header = new JWSInput(response.getAccessToken()).getHeader();
+
+        assertEquals(expectedAccessAlg, header.getAlgorithm().name());
+        assertEquals("JWT", header.getType());
+        assertNull(header.getContentType());
+
+        header = new JWSInput(response.getRefreshToken()).getHeader();
+        assertEquals(expectedRefreshAlg, header.getAlgorithm().name());
+        assertEquals("JWT", header.getType());
+        assertNull(header.getContentType());
+
+        events.expectLogin()
+                .client(clientId)
+                .user(userId)
+                .session(accessToken.getSessionState())
+                .detail(Details.GRANT_TYPE, OAuth2Constants.PASSWORD)
+                .detail(Details.TOKEN_ID, accessToken.getId())
+                .detail(Details.REFRESH_TOKEN_ID, refreshToken.getId())
+                .detail(Details.USERNAME, login)
+                .removeDetail(Details.CODE_ID)
+                .removeDetail(Details.REDIRECT_URI)
+                .removeDetail(Details.CONSENT)
+                .assertEvent();
+
+        Assert.assertTrue(login.equals(accessToken.getPreferredUsername()) || login.equals(accessToken.getEmail()));
+
+        assertEquals(accessToken.getSessionState(), refreshToken.getSessionState());
+
+        OAuthClient.AccessTokenResponse refreshedResponse = oauth.doRefreshTokenRequest(response.getRefreshToken(), "secret");
+
+        AccessToken refreshedAccessToken = oauth.verifyToken(refreshedResponse.getAccessToken());
+        RefreshToken refreshedRefreshToken = oauth.parseRefreshToken(refreshedResponse.getRefreshToken());
 
         assertEquals(accessToken.getSessionState(), refreshedAccessToken.getSessionState());
         assertEquals(accessToken.getSessionState(), refreshedRefreshToken.getSessionState());
@@ -230,7 +309,7 @@ public class ResourceOwnerPasswordCredentialsGrantTest extends AbstractKeycloakT
         assertEquals(200, response.getStatusCode());
 
         AccessToken accessToken = oauth.verifyToken(response.getAccessToken());
-        RefreshToken refreshToken = oauth.verifyRefreshToken(response.getRefreshToken());
+        RefreshToken refreshToken = oauth.parseRefreshToken(response.getRefreshToken());
 
         events.expectLogin()
                 .client("resource-owner")
@@ -331,6 +410,34 @@ public class ResourceOwnerPasswordCredentialsGrantTest extends AbstractKeycloakT
 
         OAuthClient.AccessTokenResponse response = oauth.doGrantAccessTokenRequest("secret", "test-user@localhost", "password");
 
+        assertEquals(400, response.getStatusCode());
+
+        assertEquals("invalid_grant", response.getError());
+        assertEquals("Account is not fully set up", response.getErrorDescription());
+
+        events.expectLogin()
+                .client("resource-owner")
+                .session((String) null)
+                .clearDetails()
+                .error(Errors.RESOLVE_REQUIRED_ACTIONS)
+                .user((String) null)
+                .assertEvent();
+
+        RealmManager.realm(realmResource).verifyEmail(false);
+        UserManager.realm(realmResource).username("test-user@localhost").removeRequiredAction(UserModel.RequiredAction.VERIFY_EMAIL.toString());
+
+    }
+    
+    @Test
+    public void grantAccessTokenVerifyEmailInvalidPassword() throws Exception {
+
+        RealmResource realmResource = adminClient.realm("test");
+        RealmManager.realm(realmResource).verifyEmail(true);
+
+        oauth.clientId("resource-owner");
+
+        OAuthClient.AccessTokenResponse response = oauth.doGrantAccessTokenRequest("secret", "test-user@localhost", "bad-password");
+
         assertEquals(401, response.getStatusCode());
 
         assertEquals("invalid_grant", response.getError());
@@ -339,9 +446,11 @@ public class ResourceOwnerPasswordCredentialsGrantTest extends AbstractKeycloakT
         events.expectLogin()
                 .client("resource-owner")
                 .session((String) null)
-                .clearDetails()
-                .error(Errors.RESOLVE_REQUIRED_ACTIONS)
-                .user((String) null)
+                .detail(Details.GRANT_TYPE, OAuth2Constants.PASSWORD)
+                .removeDetail(Details.CODE_ID)
+                .removeDetail(Details.REDIRECT_URI)
+                .removeDetail(Details.CONSENT)
+                .error(Errors.INVALID_USER_CREDENTIALS)
                 .assertEvent();
 
         RealmManager.realm(realmResource).verifyEmail(false);
@@ -362,10 +471,10 @@ public class ResourceOwnerPasswordCredentialsGrantTest extends AbstractKeycloakT
 
             OAuthClient.AccessTokenResponse response = oauth.doGrantAccessTokenRequest("secret", "test-user@localhost", "password");
 
-            assertEquals(401, response.getStatusCode());
+            assertEquals(400, response.getStatusCode());
 
             assertEquals("invalid_grant", response.getError());
-            assertEquals("Invalid user credentials", response.getErrorDescription());
+            assertEquals("Account is not fully set up", response.getErrorDescription());
 
             setTimeOffset(0);
 
@@ -375,6 +484,40 @@ public class ResourceOwnerPasswordCredentialsGrantTest extends AbstractKeycloakT
                     .clearDetails()
                     .error(Errors.RESOLVE_REQUIRED_ACTIONS)
                     .user((String) null)
+                    .assertEvent();
+        } finally {
+            RealmManager.realm(realmResource).passwordPolicy("");
+            UserManager.realm(realmResource).username("test-user@localhost")
+                    .removeRequiredAction(UserModel.RequiredAction.UPDATE_PASSWORD.toString());
+        }
+    }
+    
+    @Test
+    public void grantAccessTokenExpiredPasswordInvalidPassword() throws Exception {
+
+        RealmResource realmResource = adminClient.realm("test");
+        RealmManager.realm(realmResource).passwordPolicy("forceExpiredPasswordChange(1)");
+
+        try {
+            setTimeOffset(60 * 60 * 48);
+
+            oauth.clientId("resource-owner");
+
+            OAuthClient.AccessTokenResponse response = oauth.doGrantAccessTokenRequest("secret", "test-user@localhost", "bad-password");
+
+            assertEquals(401, response.getStatusCode());
+
+            assertEquals("invalid_grant", response.getError());
+            assertEquals("Invalid user credentials", response.getErrorDescription());
+
+            events.expectLogin()
+                    .client("resource-owner")
+                    .session((String) null)
+                    .detail(Details.GRANT_TYPE, OAuth2Constants.PASSWORD)
+                    .removeDetail(Details.CODE_ID)
+                    .removeDetail(Details.REDIRECT_URI)
+                    .removeDetail(Details.CONSENT)
+                    .error(Errors.INVALID_USER_CREDENTIALS)
                     .assertEvent();
         } finally {
             RealmManager.realm(realmResource).passwordPolicy("");
@@ -392,6 +535,7 @@ public class ResourceOwnerPasswordCredentialsGrantTest extends AbstractKeycloakT
         assertEquals(401, response.getStatusCode());
 
         assertEquals("invalid_grant", response.getError());
+        assertEquals("Invalid user credentials", response.getErrorDescription());
 
         events.expectLogin()
                 .client("resource-owner")

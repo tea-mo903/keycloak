@@ -20,6 +20,7 @@ import org.jboss.logging.Logger;
 import org.jboss.resteasy.annotations.cache.NoCache;
 import org.jboss.resteasy.spi.HttpRequest;
 import org.jboss.resteasy.spi.ResteasyProviderFactory;
+import org.keycloak.OAuthErrorException;
 import org.keycloak.authentication.AuthenticationProcessor;
 import org.keycloak.authentication.authenticators.broker.AbstractIdpAuthenticator;
 import org.keycloak.authentication.authenticators.broker.util.PostBrokerLoginConstants;
@@ -45,6 +46,7 @@ import org.keycloak.models.AccountRoles;
 import org.keycloak.models.AuthenticatedClientSessionModel;
 import org.keycloak.models.AuthenticationFlowModel;
 import org.keycloak.models.ClientModel;
+import org.keycloak.models.ClientSessionContext;
 import org.keycloak.models.Constants;
 import org.keycloak.models.FederatedIdentityModel;
 import org.keycloak.models.IdentityProviderMapperModel;
@@ -80,11 +82,23 @@ import org.keycloak.services.messages.Messages;
 import org.keycloak.services.resources.account.AccountFormService;
 import org.keycloak.services.util.BrowserHistoryHelper;
 import org.keycloak.services.util.CacheControlUtil;
+import org.keycloak.services.util.DefaultClientSessionContext;
 import org.keycloak.services.validation.Validation;
 import org.keycloak.sessions.AuthenticationSessionModel;
 import org.keycloak.sessions.RootAuthenticationSessionModel;
 import org.keycloak.util.JsonSerialization;
 
+import javax.ws.rs.GET;
+import javax.ws.rs.OPTIONS;
+import javax.ws.rs.POST;
+import javax.ws.rs.Path;
+import javax.ws.rs.PathParam;
+import javax.ws.rs.QueryParam;
+import javax.ws.rs.WebApplicationException;
+import javax.ws.rs.core.Context;
+import javax.ws.rs.core.HttpHeaders;
+import javax.ws.rs.core.Response;
+import javax.ws.rs.core.UriBuilder;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -99,19 +113,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
-import javax.ws.rs.GET;
-import javax.ws.rs.OPTIONS;
-import javax.ws.rs.POST;
-import javax.ws.rs.Path;
-import javax.ws.rs.PathParam;
-import javax.ws.rs.QueryParam;
-import javax.ws.rs.WebApplicationException;
-import javax.ws.rs.core.Context;
-import javax.ws.rs.core.HttpHeaders;
-import javax.ws.rs.core.Response;
-import javax.ws.rs.core.UriBuilder;
-import javax.ws.rs.core.UriInfo;
-
 /**
  * <p></p>
  *
@@ -125,9 +126,6 @@ public class IdentityBrokerService implements IdentityProvider.AuthenticationCal
     private static final Logger logger = Logger.getLogger(IdentityBrokerService.class);
 
     private final RealmModel realmModel;
-
-    @Context
-    private UriInfo uriInfo;
 
     @Context
     private KeycloakSession session;
@@ -209,7 +207,7 @@ public class IdentityBrokerService implements IdentityProvider.AuthenticationCal
         this.event.event(EventType.CLIENT_INITIATED_ACCOUNT_LINKING);
         checkRealm();
         ClientModel client = checkClient(clientId);
-        redirectUri = RedirectUtils.verifyRedirectUri(uriInfo, redirectUri, realmModel, client);
+        redirectUri = RedirectUtils.verifyRedirectUri(session.getContext().getUri(), redirectUri, realmModel, client);
         if (redirectUri == null) {
             event.error(Errors.INVALID_REDIRECT_URI);
             throw new ErrorPageException(session, Response.Status.BAD_REQUEST, Messages.INVALID_REQUEST);
@@ -268,9 +266,13 @@ public class IdentityBrokerService implements IdentityProvider.AuthenticationCal
         if (!accountService.getId().equals(client.getId())) {
             RoleModel manageAccountRole = accountService.getRole(AccountRoles.MANAGE_ACCOUNT);
 
-            if (!clientSession.getRoles().contains(manageAccountRole.getId())) {
+            // Ensure user has role and client has "role scope" for this role
+            ClientSessionContext ctx = DefaultClientSessionContext.fromClientSessionScopeParameter(clientSession);
+            Set<RoleModel> userAccountRoles = ctx.getRoles();
+
+            if (!userAccountRoles.contains(manageAccountRole)) {
                 RoleModel linkRole = accountService.getRole(AccountRoles.MANAGE_ACCOUNT_LINKS);
-                if (!clientSession.getRoles().contains(linkRole.getId())) {
+                if (!userAccountRoles.contains(linkRole)) {
                     event.error(Errors.NOT_ALLOWED);
                     UriBuilder builder = UriBuilder.fromUri(redirectUri)
                             .queryParam(errorParam, Errors.NOT_ALLOWED)
@@ -431,15 +433,18 @@ public class IdentityBrokerService implements IdentityProvider.AuthenticationCal
 
         try {
             AppAuthManager authManager = new AppAuthManager();
-            AuthenticationManager.AuthResult authResult = authManager.authenticateBearerToken(this.session, this.realmModel, this.uriInfo, this.clientConnection, this.request.getHttpHeaders());
+            AuthenticationManager.AuthResult authResult = authManager.authenticateBearerToken(this.session, this.realmModel, this.session.getContext().getUri(), this.clientConnection, this.request.getHttpHeaders());
 
             if (authResult != null) {
                 AccessToken token = authResult.getToken();
-                String[] audience = token.getAudience();
-                ClientModel clientModel = this.realmModel.getClientByClientId(audience[0]);
+                String issuedFor = token.getIssuedFor();
+                ClientModel clientModel = this.realmModel.getClientByClientId(issuedFor);
 
                 if (clientModel == null) {
                     return badRequest("Invalid client.");
+                }
+                if (!clientModel.isEnabled()) {
+                    return badRequest("Client is disabled");
                 }
 
                 session.getContext().setClient(clientModel);
@@ -550,13 +555,19 @@ public class IdentityBrokerService implements IdentityProvider.AuthenticationCal
             username = username.trim();
             context.setModelUsername(username);
 
+            boolean forwardedPassiveLogin = "true".equals(authenticationSession.getAuthNote(AuthenticationProcessor.FORWARDED_PASSIVE_LOGIN));
             // Redirect to firstBrokerLogin after successful login and ensure that previous authentication state removed
             AuthenticationProcessor.resetFlow(authenticationSession, LoginActionsService.FIRST_BROKER_LOGIN_PATH);
+
+            // Set the FORWARDED_PASSIVE_LOGIN note (if needed) after resetting the session so it is not lost.
+            if (forwardedPassiveLogin) {
+                authenticationSession.setAuthNote(AuthenticationProcessor.FORWARDED_PASSIVE_LOGIN, "true");
+            }
 
             SerializedBrokeredIdentityContext ctx = SerializedBrokeredIdentityContext.serialize(context);
             ctx.saveToAuthenticationSession(authenticationSession, AbstractIdpAuthenticator.BROKERED_CONTEXT_NOTE);
 
-            URI redirect = LoginActionsService.firstBrokerLoginProcessor(uriInfo)
+            URI redirect = LoginActionsService.firstBrokerLoginProcessor(session.getContext().getUri())
                     .queryParam(Constants.CLIENT_ID, authenticationSession.getClient().getClientId())
                     .queryParam(Constants.TAB_ID, authenticationSession.getTabId())
                     .build(realmModel.getName());
@@ -606,7 +617,6 @@ public class IdentityBrokerService implements IdentityProvider.AuthenticationCal
 
     private Response afterFirstBrokerLogin(ClientSessionCode<AuthenticationSessionModel> clientSessionCode) {
         AuthenticationSessionModel authSession = clientSessionCode.getClientSession();
-
         try {
             this.event.detail(Details.CODE_ID, authSession.getParentSession().getId())
                     .removeDetail("auth_method");
@@ -712,7 +722,7 @@ public class IdentityBrokerService implements IdentityProvider.AuthenticationCal
 
             authSession.setAuthNote(PostBrokerLoginConstants.PBL_AFTER_FIRST_BROKER_LOGIN, String.valueOf(wasFirstBrokerLogin));
 
-            URI redirect = LoginActionsService.postBrokerLoginProcessor(uriInfo)
+            URI redirect = LoginActionsService.postBrokerLoginProcessor(session.getContext().getUri())
                     .queryParam(Constants.CLIENT_ID, authSession.getClient().getClientId())
                     .queryParam(Constants.TAB_ID, authSession.getTabId())
                     .build(realmModel.getName());
@@ -806,14 +816,18 @@ public class IdentityBrokerService implements IdentityProvider.AuthenticationCal
             logger.debugf("Performing local authentication for user [%s].", federatedUser);
         }
 
-        AuthenticationManager.setRolesAndMappersInSession(authSession);
+        AuthenticationManager.setClientScopesInSession(authSession);
 
-        String nextRequiredAction = AuthenticationManager.nextRequiredAction(session, authSession, clientConnection, request, uriInfo, event);
+        String nextRequiredAction = AuthenticationManager.nextRequiredAction(session, authSession, clientConnection, request, session.getContext().getUri(), event);
         if (nextRequiredAction != null) {
-            return AuthenticationManager.redirectToRequiredActions(session, realmModel, authSession, uriInfo, nextRequiredAction);
+            if ("true".equals(authSession.getAuthNote(AuthenticationProcessor.FORWARDED_PASSIVE_LOGIN))) {
+                logger.errorf("Required action %s found. Auth requests using prompt=none are incompatible with required actions", nextRequiredAction);
+                return checkPassiveLoginError(authSession, OAuthErrorException.INTERACTION_REQUIRED);
+            }
+            return AuthenticationManager.redirectToRequiredActions(session, realmModel, authSession, session.getContext().getUri(), nextRequiredAction);
         } else {
             event.detail(Details.CODE_ID, authSession.getParentSession().getId());  // todo This should be set elsewhere.  find out why tests fail.  Don't know where this is supposed to be set
-            return AuthenticationManager.finishedRequiredActions(session, authSession, null, clientConnection, request, uriInfo, event);
+            return AuthenticationManager.finishedRequiredActions(session, authSession, null, clientConnection, request, session.getContext().getUri(), event);
         }
     }
 
@@ -845,6 +859,11 @@ public class IdentityBrokerService implements IdentityProvider.AuthenticationCal
         Response accountManagementFailedLinking = checkAccountManagementFailedLinking(clientCode.getClientSession(), message);
         if (accountManagementFailedLinking != null) {
             return accountManagementFailedLinking;
+        }
+
+        Response passiveLoginErrorReturned = checkPassiveLoginError(clientCode.getClientSession(), message);
+        if (passiveLoginErrorReturned != null) {
+            return passiveLoginErrorReturned;
         }
 
         return browserAuthentication(clientCode.getClientSession(), message);
@@ -913,7 +932,7 @@ public class IdentityBrokerService implements IdentityProvider.AuthenticationCal
         }
         context.getIdp().authenticationFinished(authSession, context);
 
-        AuthenticationManager.setRolesAndMappersInSession(authSession);
+        AuthenticationManager.setClientScopesInSession(authSession);
         TokenManager.attachAuthenticationSession(session, userSession, authSession);
 
         if (isDebugEnabled()) {
@@ -991,7 +1010,7 @@ public class IdentityBrokerService implements IdentityProvider.AuthenticationCal
             return ParsedCodeContext.response(staleCodeError);
         }
 
-        SessionCodeChecks checks = new SessionCodeChecks(realmModel, uriInfo, request, clientConnection, session, event, null, code, null, clientId, tabId, LoginActionsService.AUTHENTICATE_PATH);
+        SessionCodeChecks checks = new SessionCodeChecks(realmModel, session.getContext().getUri(), request, clientConnection, session, event, null, code, null, clientId, tabId, LoginActionsService.AUTHENTICATE_PATH);
         checks.initialVerify();
         if (!checks.verifyActiveAndValidAction(AuthenticationSessionModel.Action.AUTHENTICATE.name(), ClientSessionCode.ActionType.LOGIN)) {
 
@@ -1045,6 +1064,10 @@ public class IdentityBrokerService implements IdentityProvider.AuthenticationCal
         SamlService samlService = (SamlService) factory.createProtocolEndpoint(realmModel, event);
         ResteasyProviderFactory.getInstance().injectProperties(samlService);
         AuthenticationSessionModel authSession = samlService.getOrCreateLoginSessionForIdpInitiatedSso(session, realmModel, oClient.get(), null);
+        if (authSession == null) {
+            event.error(Errors.INVALID_REDIRECT_URI);
+            return ParsedCodeContext.response(redirectToErrorPage(Response.Status.BAD_REQUEST, Messages.INVALID_REDIRECT_URI));
+        }
 
         return ParsedCodeContext.clientSessionCode(new ClientSessionCode<>(session, this.realmModel, authSession));
     }
@@ -1064,6 +1087,29 @@ public class IdentityBrokerService implements IdentityProvider.AuthenticationCal
         }
     }
 
+    /**
+     * Checks if specified message matches one of the passive login error messages and if it does builds a response that
+     * redirects the error back to the client.
+     *
+     * @param authSession the authentication session.
+     * @param message the error message.
+     * @return a {@code {@link Response}} that redirects the error message back to the client if the {@code message} is one
+     * of the passive login error messages, or {@code null} if it is not.
+     */
+    private Response checkPassiveLoginError(AuthenticationSessionModel authSession, String message) {
+        LoginProtocol.Error error = OAuthErrorException.LOGIN_REQUIRED.equals(message) ? LoginProtocol.Error.PASSIVE_LOGIN_REQUIRED :
+                (OAuthErrorException.INTERACTION_REQUIRED.equals(message) ? LoginProtocol.Error.PASSIVE_INTERACTION_REQUIRED : null);
+        if (error != null) {
+            LoginProtocol protocol = session.getProvider(LoginProtocol.class, authSession.getProtocol());
+            protocol.setRealm(realmModel)
+                    .setHttpHeaders(headers)
+                    .setUriInfo(session.getContext().getUri())
+                    .setEventBuilder(event);
+            return protocol.sendError(authSession, error);
+        }
+        return null;
+    }
+
     private AuthenticationRequest createAuthenticationRequest(String providerId, ClientSessionCode<AuthenticationSessionModel> clientSessionCode) {
         AuthenticationSessionModel authSession = null;
         IdentityBrokerState encodedState = null;
@@ -1074,11 +1120,11 @@ public class IdentityBrokerService implements IdentityProvider.AuthenticationCal
             encodedState = IdentityBrokerState.decoded(relayState, authSession.getClient().getClientId(), authSession.getTabId());
         }
 
-        return new AuthenticationRequest(this.session, this.realmModel, authSession, this.request, this.uriInfo, encodedState, getRedirectUri(providerId));
+        return new AuthenticationRequest(this.session, this.realmModel, authSession, this.request, this.session.getContext().getUri(), encodedState, getRedirectUri(providerId));
     }
 
     private String getRedirectUri(String providerId) {
-        return Urls.identityProviderAuthnResponse(this.uriInfo.getBaseUri(), providerId, this.realmModel.getName()).toString();
+        return Urls.identityProviderAuthnResponse(this.session.getContext().getUri().getBaseUri(), providerId, this.realmModel.getName()).toString();
     }
 
     private Response redirectToErrorPage(AuthenticationSessionModel authSession, Response.Status status, String message, Object ... parameters) {
@@ -1133,7 +1179,7 @@ public class IdentityBrokerService implements IdentityProvider.AuthenticationCal
                 .setEventBuilder(event)
                 .setRealm(realmModel)
                 .setSession(session)
-                .setUriInfo(uriInfo)
+                .setUriInfo(session.getContext().getUri())
                 .setRequest(request);
         if (errorMessage != null) processor.setForwardedErrorMessage(new FormMessage(null, errorMessage));
 
@@ -1195,7 +1241,7 @@ public class IdentityBrokerService implements IdentityProvider.AuthenticationCal
     }
 
     private Response corsResponse(Response response, ClientModel clientModel) {
-        return Cors.add(this.request, Response.fromResponse(response)).auth().allowedOrigins(uriInfo, clientModel).build();
+        return Cors.add(this.request, Response.fromResponse(response)).auth().allowedOrigins(session.getContext().getUri(), clientModel).build();
     }
 
     private void fireErrorEvent(String message, Throwable throwable) {
@@ -1238,7 +1284,6 @@ public class IdentityBrokerService implements IdentityProvider.AuthenticationCal
             this.session.getTransactionManager().rollback();
         }
     }
-
 
     private static class ParsedCodeContext {
         private ClientSessionCode<AuthenticationSessionModel> clientSessionCode;

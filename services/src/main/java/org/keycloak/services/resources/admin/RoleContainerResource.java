@@ -19,14 +19,11 @@ package org.keycloak.services.resources.admin;
 
 import org.jboss.resteasy.annotations.cache.NoCache;
 import org.jboss.resteasy.spi.NotFoundException;
-import org.jboss.resteasy.spi.ResteasyProviderFactory;
-import org.keycloak.services.resources.admin.permissions.AdminPermissionEvaluator;
-import org.keycloak.services.resources.admin.permissions.AdminPermissionManagement;
-import org.keycloak.services.resources.admin.permissions.AdminPermissions;
 import org.keycloak.events.admin.OperationType;
 import org.keycloak.events.admin.ResourceType;
 import org.keycloak.models.ClientModel;
 import org.keycloak.models.Constants;
+import org.keycloak.models.GroupModel;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.ModelDuplicateException;
 import org.keycloak.models.RealmModel;
@@ -34,10 +31,14 @@ import org.keycloak.models.RoleContainerModel;
 import org.keycloak.models.RoleModel;
 import org.keycloak.models.UserModel;
 import org.keycloak.models.utils.ModelToRepresentation;
+import org.keycloak.representations.idm.GroupRepresentation;
 import org.keycloak.representations.idm.ManagementPermissionReference;
 import org.keycloak.representations.idm.RoleRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
 import org.keycloak.services.ErrorResponse;
+import org.keycloak.services.resources.admin.permissions.AdminPermissionEvaluator;
+import org.keycloak.services.resources.admin.permissions.AdminPermissionManagement;
+import org.keycloak.services.resources.admin.permissions.AdminPermissions;
 
 import javax.ws.rs.BadRequestException;
 import javax.ws.rs.Consumes;
@@ -50,13 +51,13 @@ import javax.ws.rs.Path;
 import javax.ws.rs.PathParam;
 import javax.ws.rs.Produces;
 import javax.ws.rs.QueryParam;
-import javax.ws.rs.core.Context;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.UriInfo;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * @resource Roles
@@ -97,7 +98,7 @@ public class RoleContainerResource extends RoleResource {
         Set<RoleModel> roleModels = roleContainer.getRoles();
         List<RoleRepresentation> roles = new ArrayList<RoleRepresentation>();
         for (RoleModel roleModel : roleModels) {
-            roles.add(ModelToRepresentation.toRepresentation(roleModel));
+            roles.add(ModelToRepresentation.toBriefRepresentation(roleModel));
         }
         return roles;
     }
@@ -120,8 +121,6 @@ public class RoleContainerResource extends RoleResource {
         try {
             RoleModel role = roleContainer.addRole(rep.getName());
             role.setDescription(rep.getDescription());
-            boolean scopeParamRequired = rep.isScopeParamRequired()==null ? false : rep.isScopeParamRequired();
-            role.setScopeParamRequired(scopeParamRequired);
 
             rep.setId(role.getId());
 
@@ -286,8 +285,7 @@ public class RoleContainerResource extends RoleResource {
     @GET
     @NoCache
     @Produces(MediaType.APPLICATION_JSON)
-    public Set<RoleRepresentation> getClientRoleComposites(@Context final UriInfo uriInfo,
-                                                                final @PathParam("role-name") String roleName,
+    public Set<RoleRepresentation> getClientRoleComposites(final @PathParam("role-name") String roleName,
                                                                 final @PathParam("client") String client) {
         auth.roles().requireView(roleContainer);
         RoleModel role = roleContainer.getRole(roleName);
@@ -399,6 +397,11 @@ public class RoleContainerResource extends RoleResource {
         maxResults = maxResults != null ? maxResults : Constants.DEFAULT_MAX_RESULTS;
         
         RoleModel role = roleContainer.getRole(roleName);
+        
+        if (role == null) {
+            throw new NotFoundException("Could not find role");
+        }
+        
         List<UserRepresentation> results = new ArrayList<UserRepresentation>();
         List<UserModel> userModels = session.users().getRoleMembers(realm, role, firstResult, maxResults);
 
@@ -408,4 +411,40 @@ public class RoleContainerResource extends RoleResource {
         return results; 
         
     }    
+    
+    /**
+     * Return List of Groups that have the specified role name 
+     *
+     *
+     * @param roleName
+     * @param firstResult
+     * @param maxResults
+     * @param fullRepresentation if true, return a full representation of the GroupRepresentation objects
+     * @return
+     */
+    @Path("{role-name}/groups")
+    @GET
+    @Produces(MediaType.APPLICATION_JSON)
+    @NoCache
+    public  List<GroupRepresentation> getGroupsInRole(final @PathParam("role-name") String roleName, 
+                                                    @QueryParam("first") Integer firstResult,
+                                                    @QueryParam("max") Integer maxResults,
+                                                    @QueryParam("full") @DefaultValue("false") boolean fullRepresentation) {
+        
+        auth.roles().requireView(roleContainer);
+        firstResult = firstResult != null ? firstResult : 0;
+        maxResults = maxResults != null ? maxResults : Constants.DEFAULT_MAX_RESULTS;
+        
+        RoleModel role = roleContainer.getRole(roleName);
+        
+        if (role == null) {
+            throw new NotFoundException("Could not find role");
+        }
+        
+        List<GroupModel> groupsModel = session.realms().getGroupsByRole(realm, role, firstResult, maxResults);
+
+        return groupsModel.stream()
+        		.map(g -> ModelToRepresentation.toRepresentation(g, fullRepresentation))
+        		.collect(Collectors.toList());
+    }   
 }

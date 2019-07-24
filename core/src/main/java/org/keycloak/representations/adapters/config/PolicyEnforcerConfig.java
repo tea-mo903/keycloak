@@ -27,6 +27,9 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import org.keycloak.representations.idm.authorization.ResourceRepresentation;
 import org.keycloak.representations.idm.authorization.ScopeRepresentation;
 
+import java.util.HashSet;
+import java.util.Set;
+
 /**
  * @author <a href="mailto:psilva@redhat.com">Pedro Igor</a>
  */
@@ -53,6 +56,13 @@ public class PolicyEnforcerConfig {
     @JsonProperty("user-managed-access")
     @JsonInclude(JsonInclude.Include.NON_NULL)
     private UserManagedAccessConfig userManagedAccess;
+
+    @JsonProperty("claim-information-point")
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private Map<String, Map<String, Object>> claimInformationPointConfig;
+
+    @JsonProperty("http-method-as-scope")
+    private Boolean httpMethodAsScope;
 
     public List<PathConfig> getPaths() {
         return this.paths;
@@ -102,32 +112,53 @@ public class PolicyEnforcerConfig {
         this.onDenyRedirectTo = onDenyRedirectTo;
     }
 
+    public Map<String, Map<String, Object>> getClaimInformationPointConfig() {
+        return claimInformationPointConfig;
+    }
+
+    public void setClaimInformationPointConfig(Map<String, Map<String, Object>> config) {
+        this.claimInformationPointConfig = config;
+    }
+
+    public Boolean getHttpMethodAsScope() {
+        return httpMethodAsScope;
+    }
+
+    public void setHttpMethodAsScope(Boolean httpMethodAsScope) {
+        this.httpMethodAsScope = httpMethodAsScope;
+    }
+
     public static class PathConfig {
 
-        public static PathConfig createPathConfig(ResourceRepresentation resourceDescription) {
-            PathConfig pathConfig = new PathConfig();
+        public static Set<PathConfig> createPathConfigs(ResourceRepresentation resourceDescription) {
+            Set<PathConfig> pathConfigs = new HashSet<>();
 
-            pathConfig.setId(resourceDescription.getId());
-            pathConfig.setName(resourceDescription.getName());
+            for (String uri : resourceDescription.getUris()) {
 
-            String uri = resourceDescription.getUri();
+                PathConfig pathConfig = new PathConfig();
 
-            if (uri == null || "".equals(uri.trim())) {
-                throw new RuntimeException("Failed to configure paths. Resource [" + resourceDescription.getName() + "] has an invalid or empty URI [" + uri + "].");
+                pathConfig.setId(resourceDescription.getId());
+                pathConfig.setName(resourceDescription.getName());
+
+                if (uri == null || "".equals(uri.trim())) {
+                    throw new RuntimeException("Failed to configure paths. Resource [" + resourceDescription.getName() + "] has an invalid or empty URI [" + uri + "].");
+                }
+
+                pathConfig.setPath(uri);
+
+                List<String> scopeNames = new ArrayList<>();
+
+                for (ScopeRepresentation scope : resourceDescription.getScopes()) {
+                    scopeNames.add(scope.getName());
+                }
+
+                pathConfig.setScopes(scopeNames);
+                pathConfig.setType(resourceDescription.getType());
+
+                pathConfigs.add(pathConfig);
             }
 
-            pathConfig.setPath(uri);
-
-            List<String> scopeNames = new ArrayList<>();
-
-            for (ScopeRepresentation scope : resourceDescription.getScopes()) {
-                scopeNames.add(scope.getName());
-            }
-
-            pathConfig.setScopes(scopeNames);
-            pathConfig.setType(resourceDescription.getType());
-
-            return pathConfig;
+            return pathConfigs;
         }
 
         private String name;

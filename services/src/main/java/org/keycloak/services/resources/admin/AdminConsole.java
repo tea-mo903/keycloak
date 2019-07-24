@@ -38,7 +38,6 @@ import org.keycloak.services.managers.AppAuthManager;
 import org.keycloak.services.managers.AuthenticationManager;
 import org.keycloak.services.managers.ClientManager;
 import org.keycloak.services.managers.RealmManager;
-import org.keycloak.services.resources.KeycloakApplication;
 import org.keycloak.theme.BrowserSecurityHeaderSetup;
 import org.keycloak.theme.FreeMarkerException;
 import org.keycloak.theme.FreeMarkerUtil;
@@ -52,7 +51,6 @@ import javax.ws.rs.QueryParam;
 import javax.ws.rs.core.Context;
 import javax.ws.rs.core.HttpHeaders;
 import javax.ws.rs.core.Response;
-import javax.ws.rs.core.UriInfo;
 import javax.ws.rs.ext.Providers;
 import java.io.IOException;
 import java.net.URI;
@@ -73,9 +71,6 @@ public class AdminConsole {
     protected static final Logger logger = Logger.getLogger(AdminConsole.class);
 
     @Context
-    protected UriInfo uriInfo;
-
-    @Context
     protected ClientConnection clientConnection;
 
     @Context
@@ -89,9 +84,6 @@ public class AdminConsole {
 
     @Context
     protected Providers providers;
-
-    @Context
-    protected KeycloakApplication keycloak;
 
     protected AppAuthManager authManager;
     protected RealmModel realm;
@@ -177,7 +169,7 @@ public class AdminConsole {
         if (consoleApp == null) {
             throw new NotFoundException("Could not find admin console client");
         }
-        return new ClientManager().toInstallationRepresentation(realm, consoleApp, keycloak.getBaseUri(uriInfo));
+        return new ClientManager(new RealmManager(session)).toInstallationRepresentation(realm, consoleApp, session.getContext().getAuthServerUrl());
 
     }
 
@@ -193,7 +185,7 @@ public class AdminConsole {
     @NoCache
     public Response whoAmI(final @Context HttpHeaders headers) {
         RealmManager realmManager = new RealmManager(session);
-        AuthenticationManager.AuthResult authResult = authManager.authenticateBearerToken(session, realm, uriInfo, clientConnection, headers);
+        AuthenticationManager.AuthResult authResult = authManager.authenticateBearerToken(session, realm, session.getContext().getUri(), clientConnection, headers);
         if (authResult == null) {
             return Response.status(401).build();
         }
@@ -263,10 +255,10 @@ public class AdminConsole {
     @GET
     @NoCache
     public Response logout() {
-        URI redirect = AdminRoot.adminConsoleUrl(uriInfo).build(realm.getName());
+        URI redirect = AdminRoot.adminConsoleUrl(session.getContext().getUri()).build(realm.getName());
 
         return Response.status(302).location(
-                OIDCLoginProtocolService.logoutUrl(uriInfo).queryParam("redirect_uri", redirect.toString()).build(realm.getName())
+                OIDCLoginProtocolService.logoutUrl(session.getContext().getUri()).queryParam("redirect_uri", redirect.toString()).build(realm.getName())
         ).build();
     }
 
@@ -283,14 +275,14 @@ public class AdminConsole {
     @GET
     @NoCache
     public Response getMainPage() throws URISyntaxException, IOException, FreeMarkerException {
-        if (!uriInfo.getRequestUri().getPath().endsWith("/")) {
-            return Response.status(302).location(uriInfo.getRequestUriBuilder().path("/").build()).build();
+        if (!session.getContext().getUri().getRequestUri().getPath().endsWith("/")) {
+            return Response.status(302).location(session.getContext().getUri().getRequestUriBuilder().path("/").build()).build();
         } else {
             Theme theme = AdminRoot.getTheme(session, realm);
 
             Map<String, Object> map = new HashMap<>();
 
-            URI baseUri = uriInfo.getBaseUri();
+            URI baseUri = session.getContext().getUri().getBaseUri();
 
             map.put("authUrl", session.getContext().getContextPath());
             map.put("consoleBaseUrl", Urls.adminConsoleRoot(baseUri, realm.getName()).getPath());
@@ -310,7 +302,7 @@ public class AdminConsole {
     @GET
     @Path("{indexhtml: index.html}") // this expression is a hack to get around jaxdoclet generation bug.  Doesn't like index.html
     public Response getIndexHtmlRedirect() {
-        return Response.status(302).location(uriInfo.getRequestUriBuilder().path("../").build()).build();
+        return Response.status(302).location(session.getContext().getUri().getRequestUriBuilder().path("../").build()).build();
     }
 
     @GET

@@ -22,6 +22,7 @@ import java.security.cert.X509Certificate;
 import java.util.Enumeration;
 import java.util.LinkedList;
 import java.util.List;
+import javax.ws.rs.core.MultivaluedHashMap;
 
 import javax.ws.rs.core.MultivaluedMap;
 import javax.ws.rs.core.Response;
@@ -30,11 +31,12 @@ import org.keycloak.authentication.AuthenticationFlowContext;
 import org.keycloak.authentication.authenticators.browser.AbstractUsernameFormAuthenticator;
 import org.keycloak.events.Details;
 import org.keycloak.events.Errors;
+import org.keycloak.forms.login.LoginFormsPages;
 import org.keycloak.forms.login.LoginFormsProvider;
+import org.keycloak.forms.login.freemarker.Templates;
 import org.keycloak.models.ModelDuplicateException;
 import org.keycloak.models.UserModel;
 import org.keycloak.models.utils.FormMessage;
-import org.keycloak.services.ServicesLogger;
 
 /**
  * @author <a href="mailto:pnalyvayko@agi.com">Peter Nalyvayko</a>
@@ -42,8 +44,6 @@ import org.keycloak.services.ServicesLogger;
  *
  */
 public class X509ClientCertificateAuthenticator extends AbstractX509ClientCertificateAuthenticator {
-
-    protected static ServicesLogger logger = ServicesLogger.LOGGER;
 
     @Override
     public void close() {
@@ -66,6 +66,9 @@ public class X509ClientCertificateAuthenticator extends AbstractX509ClientCertif
                 return;
             }
 
+            saveX509CertificateAuditDataToAuthSession(context, certs[0]);
+            recordX509CertificateAuditDataViaContextEvent(context);
+
             X509AuthenticatorConfigModel config = null;
             if (context.getAuthenticatorConfig() != null && context.getAuthenticatorConfig().getConfig() != null) {
                 config = new X509AuthenticatorConfigModel(context.getAuthenticatorConfig());
@@ -79,7 +82,7 @@ public class X509ClientCertificateAuthenticator extends AbstractX509ClientCertif
 
             // Validate X509 client certificate
             try {
-                CertificateValidator.CertificateValidatorBuilder builder = certificateValidationParameters(config);
+                CertificateValidator.CertificateValidatorBuilder builder = certificateValidationParameters(context.getSession(), config);
                 CertificateValidator validator = builder.build(certs);
                 validator.checkRevocationStatus()
                          .validateKeyUsage()
@@ -216,11 +219,14 @@ public class X509ClientCertificateAuthenticator extends AbstractX509ClientCertif
             form.setErrors(errors);
         }
 
-        return form
-                .setAttribute("username", context.getUser() != null ? context.getUser().getUsername() : "unknown user")
-                .setAttribute("subjectDN", subjectDN)
-                .setAttribute("isUserEnabled", isUserEnabled)
-                .createForm("login-x509-info.ftl");
+        MultivaluedMap<String,String> formData = new MultivaluedHashMap<>();
+        formData.add("username", context.getUser() != null ? context.getUser().getUsername() : "unknown user");
+        formData.add("subjectDN", subjectDN);
+        formData.add("isUserEnabled", String.valueOf(isUserEnabled));
+
+        form.setFormData(formData);
+
+        return form.createX509ConfirmPage();
     }
 
     private void dumpContainerAttributes(AuthenticationFlowContext context) {
@@ -258,6 +264,7 @@ public class X509ClientCertificateAuthenticator extends AbstractX509ClientCertif
             return;
         }
         if (context.getUser() != null) {
+            recordX509CertificateAuditDataViaContextEvent(context);
             context.success();
             return;
         }

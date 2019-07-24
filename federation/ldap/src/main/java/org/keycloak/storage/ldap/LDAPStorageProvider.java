@@ -38,20 +38,12 @@ import org.keycloak.credential.CredentialInputValidator;
 import org.keycloak.credential.CredentialModel;
 import org.keycloak.federation.kerberos.impl.KerberosUsernamePasswordAuthenticator;
 import org.keycloak.federation.kerberos.impl.SPNEGOAuthenticator;
-import org.keycloak.models.CredentialValidationOutput;
-import org.keycloak.models.GroupModel;
-import org.keycloak.models.KeycloakSession;
-import org.keycloak.models.LDAPConstants;
-import org.keycloak.models.ModelDuplicateException;
-import org.keycloak.models.ModelException;
+import org.keycloak.models.*;
+import org.keycloak.models.cache.CachedUserModel;
+import org.keycloak.models.utils.DefaultRoles;
 import org.keycloak.models.utils.ReadOnlyUserModelDelegate;
 import org.keycloak.policy.PasswordPolicyManagerProvider;
 import org.keycloak.policy.PolicyError;
-import org.keycloak.models.RealmModel;
-import org.keycloak.models.RoleModel;
-import org.keycloak.models.UserCredentialModel;
-import org.keycloak.models.UserManager;
-import org.keycloak.models.UserModel;
 import org.keycloak.models.cache.UserCache;
 import org.keycloak.models.credential.PasswordUserCredentialModel;
 import org.keycloak.models.utils.KeycloakModelUtils;
@@ -169,6 +161,16 @@ public class LDAPStorageProvider implements UserStorageProvider,
             return existing;
         }
 
+        // We need to avoid having CachedUserModel as cache is upper-layer then LDAP. Hence having CachedUserModel here may cause StackOverflowError
+        if (local instanceof CachedUserModel) {
+            local = session.userStorageManager().getUserById(local.getId(), realm);
+
+            existing = userManager.getManagedProxiedUser(local.getId());
+            if (existing != null) {
+                return existing;
+            }
+        }
+
         UserModel proxied = local;
 
         checkDNChanged(realm, local, ldapObject);
@@ -269,7 +271,20 @@ public class LDAPStorageProvider implements UserStorageProvider,
         user.setSingleAttribute(LDAPConstants.LDAP_ID, ldapUser.getUuid());
         user.setSingleAttribute(LDAPConstants.LDAP_ENTRY_DN, ldapUser.getDn().toString());
 
-        return proxy(realm, user, ldapUser);
+        // Add the user to the default groups and add default required actions
+        UserModel proxy = proxy(realm, user, ldapUser);
+        DefaultRoles.addDefaultRoles(realm, proxy);
+
+        for (GroupModel g : realm.getDefaultGroups()) {
+            proxy.joinGroup(g);
+        }
+        for (RequiredActionProviderModel r : realm.getRequiredActionProviders()) {
+            if (r.isEnabled() && r.isDefaultAction()) {
+                proxy.addRequiredAction(r.getAlias());
+            }
+        }
+
+        return proxy;
     }
 
     @Override

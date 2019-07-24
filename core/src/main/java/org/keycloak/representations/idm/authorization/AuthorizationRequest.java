@@ -23,7 +23,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 
-import org.keycloak.representations.idm.authorization.PermissionTicketToken.ResourcePermission;
+import org.keycloak.representations.AccessToken;
 
 /**
  * @author <a href="mailto:psilva@redhat.com">Pedro Igor</a>
@@ -31,7 +31,6 @@ import org.keycloak.representations.idm.authorization.PermissionTicketToken.Reso
 public class AuthorizationRequest {
 
     private String ticket;
-    private String rpt;
     private String claimToken;
     private String claimTokenFormat;
     private String pct;
@@ -39,9 +38,11 @@ public class AuthorizationRequest {
     private PermissionTicketToken permissions = new PermissionTicketToken();
     private Metadata metadata;
     private String audience;
-    private String accessToken;
+    private String subjectToken;
     private boolean submitRequest;
     private Map<String, List<String>> claims;
+    private AccessToken rpt;
+    private String rptToken;
 
     public AuthorizationRequest(String ticket) {
         this.ticket = ticket;
@@ -59,12 +60,20 @@ public class AuthorizationRequest {
         this.ticket = ticket;
     }
 
-    public String getRpt() {
+    public AccessToken getRpt() {
         return this.rpt;
     }
 
-    public void setRpt(String rpt) {
+    public void setRpt(AccessToken rpt) {
         this.rpt = rpt;
+    }
+
+    public void setRpt(String rpt) {
+        this.rptToken = rpt;
+    }
+
+    public String getRptToken() {
+        return rptToken;
     }
 
     public void setClaimToken(String claimToken) {
@@ -123,12 +132,12 @@ public class AuthorizationRequest {
         return audience;
     }
 
-    public void setAccessToken(String accessToken) {
-        this.accessToken = accessToken;
+    public void setSubjectToken(String subjectToken) {
+        this.subjectToken = subjectToken;
     }
 
-    public String getAccessToken() {
-        return accessToken;
+    public String getSubjectToken() {
+        return subjectToken;
     }
 
     public Map<String, List<String>> getClaims() {
@@ -145,21 +154,21 @@ public class AuthorizationRequest {
 
     public void addPermission(String resourceId, String... scopes) {
         if (permissions == null) {
-            permissions = new PermissionTicketToken(new ArrayList<ResourcePermission>());
+            permissions = new PermissionTicketToken(new ArrayList<Permission>());
         }
 
-        ResourcePermission permission = null;
+        Permission permission = null;
 
-        for (ResourcePermission resourcePermission : permissions.getResources()) {
-            if (resourcePermission.getResourceId().equals(resourceId)) {
+        for (Permission resourcePermission : permissions.getPermissions()) {
+            if (resourcePermission.getResourceId() != null && resourcePermission.getResourceId().equals(resourceId)) {
                 permission = resourcePermission;
                 break;
             }
         }
 
         if (permission == null) {
-            permission = new ResourcePermission(resourceId, new HashSet<String>());
-            permissions.getResources().add(permission);
+            permission = new Permission(resourceId, new HashSet<String>());
+            permissions.getPermissions().add(permission);
         }
 
         permission.getScopes().addAll(Arrays.asList(scopes));
@@ -177,6 +186,7 @@ public class AuthorizationRequest {
 
         private Boolean includeResourceName;
         private Integer limit;
+        private String responseMode;
 
         public Boolean getIncludeResourceName() {
             if (includeResourceName == null) {
@@ -195,6 +205,14 @@ public class AuthorizationRequest {
 
         public void setLimit(Integer limit) {
             this.limit = limit;
+        }
+
+        public void setResponseMode(String responseMode) {
+            this.responseMode = responseMode;
+        }
+
+        public String getResponseMode() {
+            return responseMode;
         }
     }
 }

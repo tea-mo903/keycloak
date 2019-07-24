@@ -36,7 +36,6 @@ import org.keycloak.admin.client.resource.ClientsResource;
 import org.keycloak.admin.client.resource.RealmResource;
 import org.keycloak.authorization.client.AuthorizationDeniedException;
 import org.keycloak.authorization.client.AuthzClient;
-import org.keycloak.authorization.client.Configuration;
 import org.keycloak.protocol.oidc.OIDCLoginProtocol;
 import org.keycloak.protocol.oidc.mappers.GroupMembershipMapper;
 import org.keycloak.protocol.oidc.mappers.OIDCAttributeMapperHelper;
@@ -50,14 +49,12 @@ import org.keycloak.representations.idm.authorization.GroupPolicyRepresentation;
 import org.keycloak.representations.idm.authorization.PermissionRequest;
 import org.keycloak.representations.idm.authorization.ResourcePermissionRepresentation;
 import org.keycloak.representations.idm.authorization.ResourceRepresentation;
-import org.keycloak.testsuite.util.AdminClientUtil;
 import org.keycloak.testsuite.util.ClientBuilder;
 import org.keycloak.testsuite.util.GroupBuilder;
 import org.keycloak.testsuite.util.RealmBuilder;
 import org.keycloak.testsuite.util.RoleBuilder;
 import org.keycloak.testsuite.util.RolesBuilder;
 import org.keycloak.testsuite.util.UserBuilder;
-import org.keycloak.util.JsonSerialization;
 
 /**
  * @author <a href="mailto:psilva@redhat.com">Pedro Igor</a>
@@ -71,7 +68,6 @@ public class GroupNamePolicyTest extends AbstractAuthzTest {
         groupProtocolMapper.setName("groups");
         groupProtocolMapper.setProtocolMapper(GroupMembershipMapper.PROVIDER_ID);
         groupProtocolMapper.setProtocol(OIDCLoginProtocol.LOGIN_PROTOCOL);
-        groupProtocolMapper.setConsentRequired(false);
         Map<String, String> config = new HashMap<>();
         config.put(OIDCAttributeMapperHelper.TOKEN_CLAIM_NAME, "groups");
         config.put(OIDCAttributeMapperHelper.INCLUDE_IN_ACCESS_TOKEN, "true");
@@ -104,7 +100,8 @@ public class GroupNamePolicyTest extends AbstractAuthzTest {
                     .redirectUris("http://localhost/resource-server-test")
                     .defaultRoles("uma_protection")
                     .directAccessGrants()
-                    .protocolMapper(groupProtocolMapper))
+                    .protocolMapper(groupProtocolMapper)
+                    .serviceAccountsEnabled(true))
                 .build());
     }
 
@@ -156,6 +153,13 @@ public class GroupNamePolicyTest extends AbstractAuthzTest {
         } catch (AuthorizationDeniedException ignore) {
 
         }
+
+        try {
+            authzClient.authorization(authzClient.obtainAccessToken().getToken()).authorize(new AuthorizationRequest(ticket));
+            fail("Should fail because service account is not granted with expected group");
+        } catch (AuthorizationDeniedException ignore) {
+
+        }
     }
 
     @Test
@@ -196,7 +200,7 @@ public class GroupNamePolicyTest extends AbstractAuthzTest {
         policy.setGroupsClaim("groups");
         policy.addGroupPath(groupPath, extendChildren);
 
-        getClient().authorization().policies().group().create(policy);
+        getClient().authorization().policies().group().create(policy).close();
     }
 
     private void createResourcePermission(String name, String resource, String... policies) {
@@ -206,19 +210,19 @@ public class GroupNamePolicyTest extends AbstractAuthzTest {
         permission.addResource(resource);
         permission.addPolicy(policies);
 
-        getClient().authorization().permissions().resource().create(permission);
+        getClient().authorization().permissions().resource().create(permission).close();
     }
 
     private void createResource(String name) {
         AuthorizationResource authorization = getClient().authorization();
         ResourceRepresentation resource = new ResourceRepresentation(name);
 
-        authorization.resources().create(resource);
+        authorization.resources().create(resource).close();
     }
 
     private RealmResource getRealm() {
         try {
-            return AdminClientUtil.createAdminClient().realm("authz-test");
+            return getAdminClient().realm("authz-test");
         } catch (Exception e) {
             throw new RuntimeException("Failed to create admin client");
         }
@@ -230,11 +234,7 @@ public class GroupNamePolicyTest extends AbstractAuthzTest {
     }
 
     private AuthzClient getAuthzClient() {
-        try {
-            return AuthzClient.create(JsonSerialization.readValue(getClass().getResourceAsStream("/authorization-test/default-keycloak.json"), Configuration.class));
-        } catch (IOException cause) {
-            throw new RuntimeException("Failed to create authz client", cause);
-        }
+        return AuthzClient.create(getClass().getResourceAsStream("/authorization-test/default-keycloak.json"));
     }
 
     private ClientResource getClient() {

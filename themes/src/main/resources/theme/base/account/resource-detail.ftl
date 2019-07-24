@@ -57,24 +57,7 @@
     </style>
     <script>
         function removeScopeElm(elm) {
-            var td = elm.parentNode;
-            var tr = td.parentNode;
-            var tbody = tr.parentNode;
-
-            td.removeChild(elm);
-
-            var childCount = td.childNodes.length - 1;
-
-            for (i = 0; i < td.childNodes.length; i++) {
-                if (!td.childNodes[i].tagName || td.childNodes[i].tagName.toUpperCase() != 'DIV') {
-                    td.removeChild(td.childNodes[i]);
-                    childCount--;
-                }
-            }
-
-            if (childCount <= 0) {
-                tbody.removeChild(tr);
-            }
+            elm.parentNode.removeChild(elm);
         }
 
         function removeAllScopes(id) {
@@ -104,7 +87,7 @@
     <div class="row">
         <div class="col-md-10">
             <h2>
-                <a href="${url.resourceUrl}">My Resources</a> <i class="fa fa-angle-right"></i> <#if authorization.resource.displayName??>${authorization.resource.displayName}<#else>${authorization.resource.name}</#if>
+                <a href="${url.resourceUrl}">${msg("myResources")}</a> <i class="fa fa-angle-right"></i> <#if authorization.resource.displayName??>${authorization.resource.displayName}<#else>${authorization.resource.name}</#if>
             </h2>
         </div>
     </div>
@@ -145,7 +128,7 @@
                                         <td>
                                             <#if permission.scopes?size != 0>
                                                 <#list permission.scopes as scope>
-                                                    <#if scope.granted>
+                                                    <#if scope.granted && scope.scope??>
                                                         <div class="search-box">
                                                             <#if scope.scope.displayName??>
                                                                 ${scope.scope.displayName}
@@ -155,6 +138,8 @@
                                                             <button class="close-icon" type="button" name="removeScope-${authorization.resource.id}-${permission.requester.username}" onclick="removeScopeElm(this.parentNode);document.forms['revokeForm-${authorization.resource.id}-${permission.requester.username}'].submit();"><i class="fa fa-times" aria-hidden="true"></i></button>
                                                             <input type="hidden" name="permission_id" value="${scope.id}"/>
                                                         </div>
+                                                    <#else>
+                                                        ${msg("anyPermission")}
                                                     </#if>
                                                 </#list>
                                             <#else>
@@ -172,7 +157,71 @@
                             </#list>
                         <#else>
                             <tr>
-                                <td colspan="4">The resource is not being shared</td>
+                                <td colspan="4">${msg("resourceIsNotBeingShared")}</td>
+                            </tr>
+                        </#if>
+                    </tbody>
+                </table>
+            </form>
+        </div>
+    </div>
+    <div class="row">
+        <div class="col-md-10">
+            <h3>
+                ${msg("resourceManagedPolicies")}
+            </h3>
+        </div>
+    </div>
+    <div class="row">
+        <div class="col-md-12">
+                <table class="table table-striped table-bordered">
+                    <thead>
+                        <tr>
+                            <th>${msg("description")}</th>
+                            <th>${msg("permission")}</th>
+                            <th>${msg("action")}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <#if authorization.resource.policies?size != 0>
+                            <#list authorization.resource.policies as permission>
+                                <form action="${url.getResourceGrant(authorization.resource.id)}" name="revokePolicyForm-${authorization.resource.id}-${permission.id}" method="post">
+                                    <input type="hidden" name="action" value="revokePolicy">
+                                    <input type="hidden" name="permission_id" value="${permission.id}"/>
+                                    <tr>
+                                        <td>
+                                            <#if permission.description??>
+                                                ${permission.description}
+                                            </#if>
+                                        </td>
+                                        <td>
+                                            <#if permission.scopes?size != 0>
+                                                <#list permission.scopes as scope>
+                                                    <div class="search-box">
+                                                        <#if scope.displayName??>
+                                                            ${scope.displayName}
+                                                        <#else>
+                                                            ${scope.name}
+                                                        </#if>
+                                                        <button class="close-icon" type="button" name="removePolicyScope-${authorization.resource.id}-${permission.id}-${scope.id}" onclick="removeScopeElm(this.parentNode);document.forms['revokePolicyForm-${authorization.resource.id}-${permission.id}'].submit();"><i class="fa fa-times" aria-hidden="true"></i></button>
+                                                        <input type="hidden" name="permission_id" value="${permission.id}:${scope.id}"/>
+                                                    </div>
+                                                </#list>
+                                            <#else>
+                                                ${msg("anyAction")}
+                                            </#if>
+                                        </td>
+                                        <td width="20%" align="middle" style="vertical-align: middle">
+                                            <a href="#" id="revokePolicy-${authorization.resource.name}-${permission.id}" onclick="document.forms['revokePolicyForm-${authorization.resource.id}-${permission.id}']['action'].value = 'revokePolicyAll';document.forms['revokePolicyForm-${authorization.resource.id}-${permission.id}'].submit();" type="submit" class="btn btn-primary">${msg("doRevoke")}</a>
+                                        </td>
+                                    </tr>
+                                </form>
+                            </#list>
+                        <#else>
+                            <tr>
+                                <td colspan="3">
+                                    ${msg("resourceNoPermissionsGrantingAccess")}
+                                </td>
                             </tr>
                         </#if>
                     </tbody>

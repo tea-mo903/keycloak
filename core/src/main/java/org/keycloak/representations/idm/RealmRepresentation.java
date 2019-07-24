@@ -37,13 +37,19 @@ public class RealmRepresentation {
     protected String displayName;
     protected String displayNameHtml;
     protected Integer notBefore;
+    protected String defaultSignatureAlgorithm;
     protected Boolean revokeRefreshToken;
     protected Integer refreshTokenMaxReuse;
     protected Integer accessTokenLifespan;
     protected Integer accessTokenLifespanForImplicitFlow;
     protected Integer ssoSessionIdleTimeout;
     protected Integer ssoSessionMaxLifespan;
+    protected Integer ssoSessionIdleTimeoutRememberMe;
+    protected Integer ssoSessionMaxLifespanRememberMe;
     protected Integer offlineSessionIdleTimeout;
+    // KEYCLOAK-7688 Offline Session Max for Offline Token
+    protected Boolean offlineSessionMaxLifespanEnabled;
+    protected Integer offlineSessionMaxLifespan;
     protected Integer accessCodeLifespan;
     protected Integer accessCodeLifespanUserAction;
     protected Integer accessCodeLifespanLogin;
@@ -106,7 +112,9 @@ public class RealmRepresentation {
     protected List<ScopeMappingRepresentation> scopeMappings;
     protected Map<String, List<ScopeMappingRepresentation>> clientScopeMappings;
     protected List<ClientRepresentation> clients;
-    protected List<ClientTemplateRepresentation> clientTemplates;
+    protected List<ClientScopeRepresentation> clientScopes;
+    protected List<String> defaultDefaultClientScopes;
+    protected List<String> defaultOptionalClientScopes;
     protected Map<String, String> browserSecurityHeaders;
     protected Map<String, String> smtpServer;
     protected List<UserFederationProviderRepresentation> userFederationProviders;
@@ -159,6 +167,8 @@ public class RealmRepresentation {
     protected List<ApplicationRepresentation> applications;
     @Deprecated
     protected List<OAuthClientRepresentation> oauthClients;
+    @Deprecated
+    protected List<ClientTemplateRepresentation> clientTemplates;
 
     public String getId() {
         return id;
@@ -236,6 +246,14 @@ public class RealmRepresentation {
         this.sslRequired = sslRequired;
     }
 
+    public String getDefaultSignatureAlgorithm() {
+        return defaultSignatureAlgorithm;
+    }
+
+    public void setDefaultSignatureAlgorithm(String defaultSignatureAlgorithm) {
+        this.defaultSignatureAlgorithm = defaultSignatureAlgorithm;
+    }
+
     public Boolean getRevokeRefreshToken() {
         return revokeRefreshToken;
     }
@@ -284,12 +302,45 @@ public class RealmRepresentation {
         this.ssoSessionMaxLifespan = ssoSessionMaxLifespan;
     }
 
+    public Integer getSsoSessionMaxLifespanRememberMe() {
+        return ssoSessionMaxLifespanRememberMe;
+    }
+
+    public void setSsoSessionMaxLifespanRememberMe(Integer ssoSessionMaxLifespanRememberMe) {
+        this.ssoSessionMaxLifespanRememberMe = ssoSessionMaxLifespanRememberMe;
+    }
+
+    public Integer getSsoSessionIdleTimeoutRememberMe() {
+        return ssoSessionIdleTimeoutRememberMe;
+    }
+
+    public void setSsoSessionIdleTimeoutRememberMe(Integer ssoSessionIdleTimeoutRememberMe) {
+        this.ssoSessionIdleTimeoutRememberMe = ssoSessionIdleTimeoutRememberMe;
+    }
+
     public Integer getOfflineSessionIdleTimeout() {
         return offlineSessionIdleTimeout;
     }
 
     public void setOfflineSessionIdleTimeout(Integer offlineSessionIdleTimeout) {
         this.offlineSessionIdleTimeout = offlineSessionIdleTimeout;
+    }
+
+    // KEYCLOAK-7688 Offline Session Max for Offline Token
+    public Boolean getOfflineSessionMaxLifespanEnabled() {
+        return offlineSessionMaxLifespanEnabled;
+    }
+
+    public void setOfflineSessionMaxLifespanEnabled(Boolean offlineSessionMaxLifespanEnabled) {
+        this.offlineSessionMaxLifespanEnabled = offlineSessionMaxLifespanEnabled;
+    }
+
+    public Integer getOfflineSessionMaxLifespan() {
+        return offlineSessionMaxLifespan;
+    }
+
+    public void setOfflineSessionMaxLifespan(Integer offlineSessionMaxLifespan) {
+        this.offlineSessionMaxLifespan = offlineSessionMaxLifespan;
     }
 
     public List<ScopeMappingRepresentation> getScopeMappings() {
@@ -304,9 +355,9 @@ public class RealmRepresentation {
         return mapping;
     }
 
-    public ScopeMappingRepresentation clientTemplateScopeMapping(String clientTemplateName) {
+    public ScopeMappingRepresentation clientScopeScopeMapping(String clientScopeName) {
         ScopeMappingRepresentation mapping = new ScopeMappingRepresentation();
-        mapping.setClientTemplate(clientTemplateName);
+        mapping.setClientScope(clientScopeName);
         if (scopeMappings == null) scopeMappings = new ArrayList<ScopeMappingRepresentation>();
         scopeMappings.add(mapping);
         return mapping;
@@ -930,12 +981,33 @@ public class RealmRepresentation {
         this.groups = groups;
     }
 
+    @Deprecated // use getClientScopes() instead
     public List<ClientTemplateRepresentation> getClientTemplates() {
         return clientTemplates;
     }
 
-    public void setClientTemplates(List<ClientTemplateRepresentation> clientTemplates) {
-        this.clientTemplates = clientTemplates;
+    public List<ClientScopeRepresentation> getClientScopes() {
+        return clientScopes;
+    }
+
+    public void setClientScopes(List<ClientScopeRepresentation> clientScopes) {
+        this.clientScopes = clientScopes;
+    }
+
+    public List<String> getDefaultDefaultClientScopes() {
+        return defaultDefaultClientScopes;
+    }
+
+    public void setDefaultDefaultClientScopes(List<String> defaultDefaultClientScopes) {
+        this.defaultDefaultClientScopes = defaultDefaultClientScopes;
+    }
+
+    public List<String> getDefaultOptionalClientScopes() {
+        return defaultOptionalClientScopes;
+    }
+
+    public void setDefaultOptionalClientScopes(List<String> defaultOptionalClientScopes) {
+        this.defaultOptionalClientScopes = defaultOptionalClientScopes;
     }
 
     public MultivaluedHashMap<String, ComponentExportRepresentation> getComponents() {

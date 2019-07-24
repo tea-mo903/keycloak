@@ -13,11 +13,11 @@ import java.util.Objects;
  *
  * @author tkyjovsk
  */
-public class ContainerInfo {
+public class ContainerInfo implements Comparable<ContainerInfo> {
 
     private URL contextRoot;
+    private URL browserContextRoot;
     private Container arquillianContainer;
-    private boolean adapterLibsInstalled;
 
     public ContainerInfo(Container arquillianContainer) {
         if (arquillianContainer == null) {
@@ -54,6 +54,14 @@ public class ContainerInfo {
         this.contextRoot = contextRoot;
     }
 
+    public void setBrowserContextRoot(URL browserContextRoot) {
+        this.browserContextRoot = browserContextRoot;
+    }
+
+    public URL getBrowserContextRoot() {
+        return browserContextRoot;
+    }
+
     public boolean isUndertow() {
         return getQualifier().toLowerCase().contains("undertow");
     }
@@ -71,20 +79,12 @@ public class ContainerInfo {
     }
 
     public boolean isJBossBased() {
-        return isAS7() || isWildfly() || isEAP();
+        return isAS7() || isWildfly() || isEAP() || getQualifier().toLowerCase().contains("jboss");
     }
 
     @Override
     public String toString() {
         return getQualifier();
-    }
-
-    public boolean isAdapterLibsInstalled() {
-        return adapterLibsInstalled;
-    }
-
-    public void setAdapterLibsInstalled(boolean adapterLibsInstalled) {
-        this.adapterLibsInstalled = adapterLibsInstalled;
     }
 
     @Override
@@ -114,6 +114,11 @@ public class ContainerInfo {
 
     public boolean isManual() {
         return Objects.equals(arquillianContainer.getContainerConfiguration().getMode(), "manual");
+    }
+
+    @Override
+    public int compareTo(ContainerInfo o) {
+        return this.getQualifier().compareTo(o.getQualifier());
     }
 
 }

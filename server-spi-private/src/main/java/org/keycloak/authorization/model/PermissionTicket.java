@@ -23,12 +23,15 @@ public interface PermissionTicket {
 
     String ID = "id";
     String RESOURCE = "resource.id";
+    String RESOURCE_NAME = "resource.name";
     String SCOPE = "scope.id";
     String SCOPE_IS_NULL = "scope_is_null";
     String OWNER = "owner";
     String GRANTED = "granted";
     String REQUESTER = "requester";
     String REQUESTER_IS_NULL = "requester_is_null";
+    String POLICY_IS_NOT_NULL = "policy_is_not_null";
+    String POLICY = "policy";
 
     /**
      * Returns the unique identifier for this instance.
@@ -73,4 +76,8 @@ public interface PermissionTicket {
      * @return a resource server
      */
     ResourceServer getResourceServer();
+
+    Policy getPolicy();
+
+    void setPolicy(Policy policy);
 }

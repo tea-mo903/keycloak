@@ -21,7 +21,6 @@ import static org.keycloak.models.utils.ModelToRepresentation.toRepresentation;
 import static org.keycloak.models.utils.RepresentationToModel.toModel;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -42,10 +41,8 @@ import javax.ws.rs.Path;
 import javax.ws.rs.PathParam;
 import javax.ws.rs.Produces;
 import javax.ws.rs.QueryParam;
-import javax.ws.rs.core.Context;
 import javax.ws.rs.core.Response;
 import javax.ws.rs.core.Response.Status;
-import javax.ws.rs.core.UriInfo;
 
 import org.jboss.resteasy.annotations.cache.NoCache;
 import org.keycloak.OAuthErrorException;
@@ -62,6 +59,7 @@ import org.keycloak.events.admin.OperationType;
 import org.keycloak.events.admin.ResourceType;
 import org.keycloak.models.ClientModel;
 import org.keycloak.models.Constants;
+import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserModel;
 import org.keycloak.representations.idm.authorization.PolicyRepresentation;
@@ -80,9 +78,11 @@ public class ResourceSetService {
     private final AuthorizationProvider authorization;
     private final AdminPermissionEvaluator auth;
     private final AdminEventBuilder adminEvent;
+    private KeycloakSession session;
     private ResourceServer resourceServer;
 
-    public ResourceSetService(ResourceServer resourceServer, AuthorizationProvider authorization, AdminPermissionEvaluator auth, AdminEventBuilder adminEvent) {
+    public ResourceSetService(KeycloakSession session, ResourceServer resourceServer, AuthorizationProvider authorization, AdminPermissionEvaluator auth, AdminEventBuilder adminEvent) {
+        this.session = session;
         this.resourceServer = resourceServer;
         this.authorization = authorization;
         this.auth = auth;
@@ -93,14 +93,14 @@ public class ResourceSetService {
     @NoCache
     @Consumes("application/json")
     @Produces("application/json")
-    public Response create(@Context UriInfo uriInfo, ResourceRepresentation resource) {
+    public Response createPost(ResourceRepresentation resource) {
         if (resource == null) {
             return Response.status(Status.BAD_REQUEST).build();
         }
 
         ResourceRepresentation newResource = create(resource);
 
-        audit(uriInfo, resource, resource.getId(), OperationType.CREATE);
+        audit(resource, resource.getId(), OperationType.CREATE);
 
         return Response.status(Status.CREATED).entity(newResource).build();
     }
@@ -135,7 +135,7 @@ public class ResourceSetService {
     @PUT
     @Consumes("application/json")
     @Produces("application/json")
-    public Response update(@Context UriInfo uriInfo, @PathParam("id") String id, ResourceRepresentation resource) {
+    public Response update(@PathParam("id") String id, ResourceRepresentation resource) {
         requireManage();
         resource.setId(id);
         StoreFactory storeFactory = this.authorization.getStoreFactory();
@@ -148,14 +148,14 @@ public class ResourceSetService {
 
         toModel(resource, resourceServer, authorization);
 
-        audit(uriInfo, resource, OperationType.UPDATE);
+        audit(resource, OperationType.UPDATE);
 
         return Response.noContent().build();
     }
 
     @Path("{id}")
     @DELETE
-    public Response delete(@Context UriInfo uriInfo, @PathParam("id") String id) {
+    public Response delete(@PathParam("id") String id) {
         requireManage();
         StoreFactory storeFactory = authorization.getStoreFactory();
         Resource resource = storeFactory.getResourceStore().findById(id, resourceServer.getId());
@@ -164,21 +164,10 @@ public class ResourceSetService {
             return Response.status(Status.NOT_FOUND).build();
         }
 
-        PolicyStore policyStore = storeFactory.getPolicyStore();
-        List<Policy> policies = policyStore.findByResource(id, resourceServer.getId());
-
-        for (Policy policyModel : policies) {
-            if (policyModel.getResources().size() == 1) {
-                policyStore.delete(policyModel.getId());
-            } else {
-                policyModel.removeResource(resource);
-            }
-        }
-
         storeFactory.getResourceStore().delete(id);
 
         if (authorization.getRealm().isAdminEventsEnabled()) {
-            audit(uriInfo, toRepresentation(resource, resourceServer, authorization), OperationType.DELETE);
+            audit(toRepresentation(resource, resourceServer, authorization), OperationType.DELETE);
         }
 
         return Response.noContent().build();
@@ -254,7 +243,8 @@ public class ResourceSetService {
     public Response getPermissions(@PathParam("id") String id) {
         requireView();
         StoreFactory storeFactory = authorization.getStoreFactory();
-        Resource model = storeFactory.getResourceStore().findById(id, resourceServer.getId());
+        ResourceStore resourceStore = storeFactory.getResourceStore();
+        Resource model = resourceStore.findById(id, resourceServer.getId());
 
         if (model == null) {
             return Response.status(Status.NOT_FOUND).build();
@@ -264,21 +254,36 @@ public class ResourceSetService {
         Set<Policy> policies = new HashSet<>();
 
         policies.addAll(policyStore.findByResource(model.getId(), resourceServer.getId()));
-        policies.addAll(policyStore.findByResourceType(model.getType(), resourceServer.getId()));
+
+        if (model.getType() != null) {
+            policies.addAll(policyStore.findByResourceType(model.getType(), resourceServer.getId()));
+
+            HashMap<String, String[]> resourceFilter = new HashMap<>();
+
+            resourceFilter.put("owner", new String[]{resourceServer.getId()});
+            resourceFilter.put("type", new String[]{model.getType()});
+
+            for (Resource resourceType : resourceStore.findByResourceServer(resourceFilter, resourceServer.getId(), -1, -1)) {
+                policies.addAll(policyStore.findByResource(resourceType.getId(), resourceServer.getId()));
+            }
+        }
+
         policies.addAll(policyStore.findByScopeIds(model.getScopes().stream().map(scope -> scope.getId()).collect(Collectors.toList()), id, resourceServer.getId()));
         policies.addAll(policyStore.findByScopeIds(model.getScopes().stream().map(scope -> scope.getId()).collect(Collectors.toList()), null, resourceServer.getId()));
 
         List<PolicyRepresentation> representation = new ArrayList<>();
 
         for (Policy policyModel : policies) {
-            PolicyRepresentation policy = new PolicyRepresentation();
+            if (!"uma".equalsIgnoreCase(policyModel.getType())) {
+                PolicyRepresentation policy = new PolicyRepresentation();
 
-            policy.setId(policyModel.getId());
-            policy.setName(policyModel.getName());
-            policy.setType(policyModel.getType());
+                policy.setId(policyModel.getId());
+                policy.setName(policyModel.getName());
+                policy.setType(policyModel.getType());
 
-            if (!representation.contains(policy)) {
-                representation.add(policy);
+                if (!representation.contains(policy)) {
+                    representation.add(policy);
+                }
             }
         }
 
@@ -414,23 +419,29 @@ public class ResourceSetService {
             attributes.put("uri_not_null", new String[] {"true"});
             attributes.put("owner", new String[] {resourceServer.getId()});
 
-            List<Resource> serverResources = storeFactory.getResourceStore().findByResourceServer(attributes, this.resourceServer.getId(), firstResult != null ? firstResult : -1, maxResult != null ? maxResult : Constants.DEFAULT_MAX_RESULTS);
-            PathMatcher<Resource> pathMatcher = new PathMatcher<Resource>() {
+            List<Resource> serverResources = storeFactory.getResourceStore().findByResourceServer(attributes, this.resourceServer.getId(), firstResult != null ? firstResult : -1, maxResult != null ? maxResult : -1);
+
+            PathMatcher<Map.Entry<String, Resource>> pathMatcher = new PathMatcher<Map.Entry<String, Resource>>() {
                 @Override
-                protected String getPath(Resource entry) {
-                    return entry.getUri();
+                protected String getPath(Map.Entry<String, Resource> entry) {
+                    return entry.getKey();
                 }
 
                 @Override
-                protected Collection<Resource> getPaths() {
-                    return serverResources;
+                protected Collection<Map.Entry<String, Resource>> getPaths() {
+                    Map<String, Resource> result = new HashMap<>();
+                    serverResources.forEach(resource -> resource.getUris().forEach(uri -> {
+                        result.put(uri, resource);
+                    }));
+
+                    return result.entrySet();
                 }
             };
 
-            Resource matches = pathMatcher.matches(uri);
+            Map.Entry<String, Resource> matches = pathMatcher.matches(uri);
 
             if (matches != null) {
-                resources = Arrays.asList(matches);
+                resources = Collections.singletonList(matches.getValue());
             }
         }
 
@@ -455,16 +466,16 @@ public class ResourceSetService {
         }
     }
 
-    private void audit(@Context UriInfo uriInfo, ResourceRepresentation resource, OperationType operation) {
-        audit(uriInfo, resource, null, operation);
+    private void audit(ResourceRepresentation resource, OperationType operation) {
+        audit(resource, null, operation);
     }
 
-    public void audit(@Context UriInfo uriInfo, ResourceRepresentation resource, String id, OperationType operation) {
+    public void audit(ResourceRepresentation resource, String id, OperationType operation) {
         if (authorization.getRealm().isAdminEventsEnabled()) {
             if (id != null) {
-                adminEvent.operation(operation).resourcePath(uriInfo, id).representation(resource).success();
+                adminEvent.operation(operation).resourcePath(session.getContext().getUri(), id).representation(resource).success();
             } else {
-                adminEvent.operation(operation).resourcePath(uriInfo).representation(resource).success();
+                adminEvent.operation(operation).resourcePath(session.getContext().getUri()).representation(resource).success();
             }
         }
     }

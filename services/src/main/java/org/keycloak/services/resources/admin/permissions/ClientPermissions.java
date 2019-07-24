@@ -27,7 +27,7 @@ import org.keycloak.authorization.model.Scope;
 import org.keycloak.authorization.policy.evaluation.EvaluationContext;
 import org.keycloak.models.AdminRoles;
 import org.keycloak.models.ClientModel;
-import org.keycloak.models.ClientTemplateModel;
+import org.keycloak.models.ClientScopeModel;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
 import org.keycloak.services.ForbiddenException;
@@ -224,7 +224,12 @@ class ClientPermissions implements ClientPermissionEvaluator,  ClientPermissionM
 
     @Override
     public boolean canList() {
-        return root.hasAnyAdminRole();
+        // when the user is assigned with query-users role, administrators can restrict which clients the user can see when using fine-grained admin permissions
+        return canView() || root.hasOneAdminRole(AdminRoles.QUERY_CLIENTS, AdminRoles.QUERY_USERS);
+    }
+
+    public boolean canList(ClientModel clientModel) {
+        return canView(clientModel) || root.hasOneAdminRole(AdminRoles.QUERY_CLIENTS);
     }
 
     @Override
@@ -235,13 +240,13 @@ class ClientPermissions implements ClientPermissionEvaluator,  ClientPermissionM
     }
 
     @Override
-    public boolean canListTemplates() {
-        return root.hasAnyAdminRole();
+    public boolean canListClientScopes() {
+        return canView() || root.hasOneAdminRole(AdminRoles.QUERY_CLIENTS);
     }
 
     @Override
-    public void requireListTemplates() {
-        if (!canListTemplates()) {
+    public void requireListClientScopes() {
+        if (!canListClientScopes()) {
             throw new ForbiddenException();
         }
     }
@@ -342,7 +347,7 @@ class ClientPermissions implements ClientPermissionEvaluator,  ClientPermissionM
                 }
 
             };
-            return root.evaluatePermission(resource, scope, server, context);
+            return root.evaluatePermission(resource, server, context, scope);
         }
         return true;
     }
@@ -376,7 +381,7 @@ class ClientPermissions implements ClientPermissionEvaluator,  ClientPermissionM
         }
 
         Scope scope = manageScope(server);
-        return root.evaluatePermission(resource, scope, server);
+        return root.evaluatePermission(resource, server, scope);
     }
 
     @Override
@@ -404,7 +409,7 @@ class ClientPermissions implements ClientPermissionEvaluator,  ClientPermissionM
         }
 
         Scope scope = configureScope(server);
-        return root.evaluatePermission(resource, scope, server);
+        return root.evaluatePermission(resource, server, scope);
     }
     @Override
     public void requireConfigure(ClientModel client) {
@@ -450,7 +455,7 @@ class ClientPermissions implements ClientPermissionEvaluator,  ClientPermissionM
         }
 
         Scope scope = viewScope(server);
-        return root.evaluatePermission(resource, scope, server);
+        return root.evaluatePermission(resource, server, scope);
     }
 
     @Override
@@ -460,51 +465,51 @@ class ClientPermissions implements ClientPermissionEvaluator,  ClientPermissionM
         }
     }
 
-    // templates
+    // client scopes
 
     @Override
-    public boolean canViewTemplates() {
+    public boolean canViewClientScopes() {
         return canView();
     }
 
     @Override
-    public boolean canManageTemplates() {
+    public boolean canManageClientScopes() {
         return canManageClientsDefault();
     }
 
     @Override
-    public void requireManageTemplates() {
-        if (!canManageTemplates()) {
+    public void requireManageClientScopes() {
+        if (!canManageClientScopes()) {
             throw new ForbiddenException();
         }
     }
     @Override
-    public void requireViewTemplates() {
-        if (!canViewTemplates()) {
+    public void requireViewClientScopes() {
+        if (!canViewClientScopes()) {
             throw new ForbiddenException();
         }
     }
 
     @Override
-    public boolean canManage(ClientTemplateModel template) {
+    public boolean canManage(ClientScopeModel clientScope) {
         return canManageClientsDefault();
     }
 
     @Override
-    public void requireManage(ClientTemplateModel template) {
-        if (!canManage(template)) {
+    public void requireManage(ClientScopeModel clientScope) {
+        if (!canManage(clientScope)) {
             throw new ForbiddenException();
         }
     }
 
     @Override
-    public boolean canView(ClientTemplateModel template) {
+    public boolean canView(ClientScopeModel clientScope) {
         return canViewClientDefault();
     }
 
     @Override
-    public void requireView(ClientTemplateModel template) {
-        if (!canView(template)) {
+    public void requireView(ClientScopeModel clientScope) {
+        if (!canView(clientScope)) {
             throw new ForbiddenException();
         }
     }
@@ -529,7 +534,7 @@ class ClientPermissions implements ClientPermissionEvaluator,  ClientPermissionM
         }
 
         Scope scope = mapRolesScope(server);
-        return root.evaluatePermission(resource, scope, server);
+        return root.evaluatePermission(resource, server, scope);
     }
 
     @Override
@@ -606,7 +611,7 @@ class ClientPermissions implements ClientPermissionEvaluator,  ClientPermissionM
         }
 
         Scope scope = authz.getStoreFactory().getScopeStore().findByName(MAP_ROLES_COMPOSITE_SCOPE, server.getId());
-        return root.evaluatePermission(resource, scope, server);
+        return root.evaluatePermission(resource, server, scope);
     }
     @Override
     public boolean canMapClientScopeRoles(ClientModel client) {
@@ -628,7 +633,7 @@ class ClientPermissions implements ClientPermissionEvaluator,  ClientPermissionM
         }
 
         Scope scope = authz.getStoreFactory().getScopeStore().findByName(MAP_ROLES_CLIENT_SCOPE, server.getId());
-        return root.evaluatePermission(resource, scope, server);
+        return root.evaluatePermission(resource, server, scope);
     }
 
     @Override

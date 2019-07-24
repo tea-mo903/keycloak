@@ -18,6 +18,8 @@
 
 package org.keycloak.authorization.policy.evaluation;
 
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -44,23 +46,32 @@ import org.keycloak.representations.idm.authorization.Logic;
  * @author <a href="mailto:psilva@redhat.com">Pedro Igor</a>
  */
 public class DefaultEvaluation implements Evaluation {
-
     private final ResourcePermission permission;
     private final EvaluationContext executionContext;
     private final Decision decision;
-    private final Policy policy;
+    private Policy policy;
     private final Policy parentPolicy;
     private final AuthorizationProvider authorizationProvider;
+    private Map<Policy, Map<Object, Effect>> decisionCache;
     private final Realm realm;
     private Effect effect;
 
-    public DefaultEvaluation(ResourcePermission permission, EvaluationContext executionContext, Policy parentPolicy, Policy policy, Decision decision, AuthorizationProvider authorizationProvider) {
+    public DefaultEvaluation(ResourcePermission permission, EvaluationContext executionContext, Policy parentPolicy, Decision decision, AuthorizationProvider authorizationProvider, Map<Policy, Map<Object, Decision.Effect>> decisionCache) {
+        this(permission, executionContext, parentPolicy, null, decision, authorizationProvider, decisionCache);
+    }
+
+    public DefaultEvaluation(ResourcePermission permission, EvaluationContext executionContext, Decision decision, AuthorizationProvider authorizationProvider) {
+        this(permission, executionContext, null, null, decision, authorizationProvider, Collections.emptyMap());
+    }
+
+    public DefaultEvaluation(ResourcePermission permission, EvaluationContext executionContext, Policy parentPolicy, Policy policy, Decision decision, AuthorizationProvider authorizationProvider, Map<Policy, Map<Object, Decision.Effect>> decisionCache) {
         this.permission = permission;
         this.executionContext = executionContext;
         this.parentPolicy = parentPolicy;
         this.policy = policy;
         this.decision = decision;
         this.authorizationProvider = authorizationProvider;
+        this.decisionCache = decisionCache;
         this.realm = createRealm();
     }
 
@@ -77,27 +88,26 @@ public class DefaultEvaluation implements Evaluation {
     @Override
     public void grant() {
         if (policy != null && Logic.NEGATIVE.equals(policy.getLogic())) {
-            this.effect = Effect.DENY;
+            setEffect(Effect.DENY);
         } else {
-            this.effect = Effect.PERMIT;
+            setEffect(Effect.PERMIT);
         }
-
-        this.decision.onDecision(this);
     }
 
     @Override
     public void deny() {
         if (policy != null && Logic.NEGATIVE.equals(policy.getLogic())) {
-            this.effect = Effect.PERMIT;
+            setEffect(Effect.PERMIT);
         } else {
-            this.effect = Effect.DENY;
+            setEffect(Effect.DENY);
         }
-
-        this.decision.onDecision(this);
     }
 
     @Override
     public Policy getPolicy() {
+        if (policy == null) {
+            return parentPolicy;
+        }
         return this.policy;
     }
 
@@ -119,7 +129,12 @@ public class DefaultEvaluation implements Evaluation {
         return effect;
     }
 
-    void denyIfNoEffect() {
+    public Map<Policy, Map<Object, Effect>> getDecisionCache() {
+        return decisionCache;
+    }
+
+    @Override
+    public void denyIfNoEffect() {
         if (this.effect == null) {
             deny();
         }
@@ -157,10 +172,12 @@ public class DefaultEvaluation implements Evaluation {
 
                 if (Objects.isNull(user)) {
                     user = session.users().getUserByUsername(id, realm);
-
-                    if (Objects.isNull(user)) {
-                        user = session.users().getUserByEmail(id, realm);
-                    }
+                }
+                if (Objects.isNull(user)) {
+                    user = session.users().getUserByEmail(id, realm);
+                }
+                if (Objects.isNull(user)) {
+                    user = session.users().getServiceAccount(realm.getClientById(id));
                 }
 
                 return user;
@@ -243,9 +260,18 @@ public class DefaultEvaluation implements Evaluation {
 
             @Override
             public Map<String, List<String>> getUserAttributes(String id) {
-                Map<String, List<String>> attributes = getUser(id, authorizationProvider.getKeycloakSession()).getAttributes();
-                return attributes;
+                return Collections.unmodifiableMap(getUser(id, authorizationProvider.getKeycloakSession()).getAttributes());
             }
         };
+    }
+
+    public void setPolicy(Policy policy) {
+        this.policy = policy;
+        this.effect = null;
+    }
+
+    public void setEffect(Effect effect) {
+        this.effect = effect;
+        this.decision.onDecision(this);
     }
 }

@@ -20,9 +20,12 @@ package org.keycloak.admin.client.resource;
 import org.jboss.resteasy.annotations.cache.NoCache;
 import org.keycloak.representations.adapters.action.GlobalRequestResult;
 import org.keycloak.representations.idm.ClientRepresentation;
+import org.keycloak.representations.idm.ClientScopeRepresentation;
 import org.keycloak.representations.idm.CredentialRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
 import org.keycloak.representations.idm.UserSessionRepresentation;
+import org.keycloak.representations.idm.ManagementPermissionReference;
+import org.keycloak.representations.idm.ManagementPermissionRepresentation;
 
 import javax.ws.rs.Consumes;
 import javax.ws.rs.DELETE;
@@ -41,6 +44,30 @@ import java.util.Map;
  * @author rodrigo.sasaki@icarros.com.br
  */
 public interface ClientResource {
+
+    /**
+     * Enables or disables the fine grain permissions feature.
+     * Returns the updated status of the server in the
+     * {@link ManagementPermissionReference}.
+     *
+     * @param status status request to apply
+     * @return permission reference indicating the updated status
+     */
+    @PUT
+    @Path("/management/permissions")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    ManagementPermissionReference setPermissions(ManagementPermissionRepresentation status);
+
+    /**
+     * Returns indicator if the fine grain permissions are enabled or not.
+     *
+     * @return current representation of the permissions feature
+     */
+    @GET
+    @Path("/management/permissions")
+    @Produces(MediaType.APPLICATION_JSON)
+    ManagementPermissionReference getPermissions();
 
     @Path("protocol-mappers")
     public ProtocolMappersResource getProtocolMappers();
@@ -121,6 +148,42 @@ public interface ClientResource {
 
     @Path("/roles")
     public RolesResource roles();
+
+    /**
+     * Get default client scopes.  Only name and ids are returned.
+     *
+     * @return default client scopes
+     */
+    @GET
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("default-client-scopes")
+    List<ClientScopeRepresentation> getDefaultClientScopes();
+
+    @PUT
+    @Path("default-client-scopes/{clientScopeId}")
+    void addDefaultClientScope(@PathParam("clientScopeId") String clientScopeId);
+
+    @DELETE
+    @Path("default-client-scopes/{clientScopeId}")
+    void removeDefaultClientScope(@PathParam("clientScopeId") String clientScopeId);
+
+    /**
+     * Get optional client scopes.  Only name and ids are returned.
+     *
+     * @return optional client scopes
+     */
+    @GET
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("optional-client-scopes")
+    List<ClientScopeRepresentation> getOptionalClientScopes();
+
+    @PUT
+    @Path("optional-client-scopes/{clientScopeId}")
+    void addOptionalClientScope(@PathParam("clientScopeId") String clientScopeId);
+
+    @DELETE
+    @Path("optional-client-scopes/{clientScopeId}")
+    void removeOptionalClientScope(@PathParam("clientScopeId") String clientScopeId);
 
     @Path("/service-account-user")
     @GET

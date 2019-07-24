@@ -19,6 +19,7 @@ package org.keycloak.authorization.client;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.Objects;
 
 import org.keycloak.authorization.client.representation.ServerConfiguration;
 import org.keycloak.authorization.client.resource.AuthorizationResource;
@@ -53,8 +54,18 @@ public class AuthzClient {
     public static AuthzClient create() throws RuntimeException {
         InputStream configStream = Thread.currentThread().getContextClassLoader().getResourceAsStream("keycloak.json");
 
-        if (configStream == null) {
-            throw new RuntimeException("Could not find any keycloak.json file in classpath.");
+        return create(configStream);
+    }
+
+    /**
+     * <p>Creates a new instance.
+     *
+     * @param configStream the input stream with the configuration data
+     * @return a new instance
+     */
+    public static AuthzClient create(InputStream configStream) throws RuntimeException {
+        if (Objects.isNull(configStream)) {
+            throw new IllegalArgumentException("Config input stream can not be null");
         }
 
         try {
@@ -103,7 +114,7 @@ public class AuthzClient {
     /**
      * <p>Creates a {@link ProtectionResource} instance which can be used to access the Protection API.
      *
-     * @param the PAT (the access token with the uma_protection scope)
+     * @param accessToken the PAT (the access token with the uma_protection scope)
      * @return a {@link ProtectionResource}
      */
     public ProtectionResource protection(final String accessToken) {

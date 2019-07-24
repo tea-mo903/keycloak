@@ -40,7 +40,6 @@ public class PersistentUserSessionAdapter implements OfflineUserSessionModel {
     private final PersistentUserSessionModel model;
     private UserModel user;
     private String userId;
-    private String username;
     private final RealmModel realm;
     private KeycloakSession session;
     private final Map<String, AuthenticatedClientSessionModel> authenticatedClientSessions;
@@ -55,12 +54,12 @@ public class PersistentUserSessionAdapter implements OfflineUserSessionModel {
         data.setIpAddress(other.getIpAddress());
         data.setNotes(other.getNotes());
         data.setRememberMe(other.isRememberMe());
-        data.setStarted(other.getStarted());
         if (other.getState() != null) {
             data.setState(other.getState().toString());
         }
 
         this.model = new PersistentUserSessionModel();
+        this.model.setStarted(other.getStarted());
         this.model.setUserSessionId(other.getId());
         this.model.setLastSessionRefresh(other.getLastSessionRefresh());
 
@@ -158,7 +157,7 @@ public class PersistentUserSessionAdapter implements OfflineUserSessionModel {
 
     @Override
     public int getStarted() {
-        return getData().getStarted();
+        return model.getStarted();
     }
 
     @Override
@@ -275,6 +274,7 @@ public class PersistentUserSessionAdapter implements OfflineUserSessionModel {
         @JsonProperty("rememberMe")
         private boolean rememberMe;
 
+        // TODO: Keeping those just for backwards compatibility. @JsonIgnoreProperties doesn't work on Wildfly - probably due to classloading issues
         @JsonProperty("started")
         private int started;
 
@@ -324,10 +324,12 @@ public class PersistentUserSessionAdapter implements OfflineUserSessionModel {
             this.rememberMe = rememberMe;
         }
 
+        @Deprecated
         public int getStarted() {
             return started;
         }
 
+        @Deprecated
         public void setStarted(int started) {
             this.started = started;
         }

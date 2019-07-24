@@ -115,6 +115,23 @@
                     {
                         "name": "Pattern 14",
                         "uri": "/keycloak-6623/sub-resource/*"
+                    },
+                    {
+                        "name": "Pattern 15",
+                        "type": "pattern-15",
+                        "uri": "/keycloak-7148/{id}"
+                    },
+                    {
+                        "name": "Pattern 16",
+                        "uris": ["/keycloak-7269/sub-resource1", "/keycloak-7269/sub-resource2/*", "/keycloak-7269/sub-resource1/{test-pattern}/specialSuffix"]
+                    },
+                    {
+                        "name": "Pattern 17",
+                        "uris": ["/keycloak-8823/resource/{version}/subresource/{id}/{other}"]
+                    },
+                    {
+                        "name": "Pattern 17 Entities",
+                        "uris": ["/keycloak-8823/resource/{version}/subresource/{id}/entities"]
                     }
                 ],
                 "policies": [
@@ -284,6 +301,47 @@
                         "decisionStrategy": "UNANIMOUS",
                         "config": {
                             "resources": "[\"Pattern 14\"]",
+                            "applyPolicies": "[\"Default Policy\"]"
+                        }
+                    },
+                    {
+                        "name": "Pattern 15 Permission",
+                        "type": "resource",
+                        "logic": "POSITIVE",
+                        "decisionStrategy": "UNANIMOUS",
+                        "config": {
+                            "defaultResourceType": "pattern-15",
+                            "default": "true",
+                            "applyPolicies": "[\"Default Policy\"]"
+                        }
+                    },
+                    {
+                        "name": "Pattern 16 Permission",
+                        "type": "resource",
+                        "logic": "POSITIVE",
+                        "decisionStrategy": "UNANIMOUS",
+                        "config": {
+                            "resources": "[\"Pattern 16\"]",
+                            "applyPolicies": "[\"Default Policy\"]"
+                        }
+                    },
+                    {
+                        "name": "Pattern 17 Permission",
+                        "type": "resource",
+                        "logic": "POSITIVE",
+                        "decisionStrategy": "UNANIMOUS",
+                        "config": {
+                            "resources": "[\"Pattern 17\"]",
+                            "applyPolicies": "[\"Default Policy\"]"
+                        }
+                    },
+                    {
+                        "name": "Pattern 17 Entities Permission",
+                        "type": "resource",
+                        "logic": "POSITIVE",
+                        "decisionStrategy": "UNANIMOUS",
+                        "config": {
+                            "resources": "[\"Pattern 17 Entities\"]",
                             "applyPolicies": "[\"Default Policy\"]"
                         }
                     }

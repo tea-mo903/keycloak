@@ -91,7 +91,6 @@ public class CustomAuthFlowOTPTest extends AbstractCustomAccountManagementTest {
         //configure OTP for test user
         testRealmAccountManagementPage.navigateTo();
         testRealmLoginPage.form().login(testUser);
-        testRealmLoginPage.form().totpForm().waitForTotpInputFieldPresent();
         String totpSecret = testRealmLoginPage.form().totpForm().getTotpSecret();
         testRealmLoginPage.form().totpForm().setTotp(totp.generateTOTP(totpSecret));
         testRealmLoginPage.form().totpForm().submit();
@@ -117,7 +116,6 @@ public class CustomAuthFlowOTPTest extends AbstractCustomAccountManagementTest {
 
         configureOTP();
         testRealmLoginPage.form().login(testUser);
-        testRealmLoginPage.form().totpForm().waitForTotpInputFieldPresent();
 
         //verify that the page is login page, not totp setup
         assertCurrentUrlStartsWith(testLoginOneTimeCodePage);
@@ -134,7 +132,6 @@ public class CustomAuthFlowOTPTest extends AbstractCustomAccountManagementTest {
         //test OTP is required
         testRealmAccountManagementPage.navigateTo();
         testRealmLoginPage.form().login(testUser);
-        testRealmLoginPage.form().totpForm().waitForTotpInputFieldPresent();
 
         //verify that the page is login page, not totp setup
         assertCurrentUrlStartsWith(testLoginOneTimeCodePage);
@@ -170,7 +167,6 @@ public class CustomAuthFlowOTPTest extends AbstractCustomAccountManagementTest {
 
         configureOTP();
         testRealmLoginPage.form().login(testUser);
-        testRealmLoginPage.form().totpForm().waitForTotpInputFieldPresent();
 
         //verify that the page is login page, not totp setup
         assertCurrentUrlStartsWith(testLoginOneTimeCodePage);
@@ -192,7 +188,6 @@ public class CustomAuthFlowOTPTest extends AbstractCustomAccountManagementTest {
         //test OTP is required
         testRealmAccountManagementPage.navigateTo();
         testRealmLoginPage.form().login(testUser);
-        testRealmLoginPage.form().totpForm().waitForTotpInputFieldPresent();
 
         //verify that the page is login page, not totp setup
         assertCurrentUrlStartsWith(testLoginOneTimeCodePage);
@@ -238,7 +233,6 @@ public class CustomAuthFlowOTPTest extends AbstractCustomAccountManagementTest {
 
         configureOTP();
         testRealmLoginPage.form().login(testUser);
-        testRealmLoginPage.form().totpForm().waitForTotpInputFieldPresent();
 
         //verify that the page is login page, not totp setup
         assertCurrentUrlStartsWith(testLoginOneTimeCodePage);
@@ -285,7 +279,6 @@ public class CustomAuthFlowOTPTest extends AbstractCustomAccountManagementTest {
 
         configureOTP();
         testRealmLoginPage.form().login(testUser);
-        testRealmLoginPage.form().totpForm().waitForTotpInputFieldPresent();
 
         //verify that the page is login page, not totp setup
         assertCurrentUrlStartsWith(testLoginOneTimeCodePage);
@@ -339,7 +332,6 @@ public class CustomAuthFlowOTPTest extends AbstractCustomAccountManagementTest {
 
         configureOTP();
         testRealmLoginPage.form().login(testUser);
-        testRealmLoginPage.form().totpForm().waitForTotpInputFieldPresent();
 
         //verify that the page is login page, not totp setup
         assertCurrentUrlStartsWith(testLoginOneTimeCodePage);
@@ -360,7 +352,7 @@ public class CustomAuthFlowOTPTest extends AbstractCustomAccountManagementTest {
     public void conditionalOTPRequestHeaderSkip() {
         //prepare config - request header skip, default to force
         Map<String, String> config = new HashMap<>();
-        String port = System.getProperty("auth.server.http.port", "8180");
+        String port = AUTH_SERVER_PORT;
         config.put(SKIP_OTP_FOR_HTTP_HEADER, "Host: localhost:" + port);
         config.put(DEFAULT_OTP_OUTCOME, FORCE);
 
@@ -376,7 +368,7 @@ public class CustomAuthFlowOTPTest extends AbstractCustomAccountManagementTest {
     public void conditionalOTPRequestHeaderForce() {
         //prepare config - equest header force, default to skip
         Map<String, String> config = new HashMap<>();
-        String port = System.getProperty("auth.server.http.port", "8180");
+        String port = AUTH_SERVER_PORT;
         config.put(FORCE_OTP_FOR_HTTP_HEADER, "Host: localhost:" + port);
         config.put(DEFAULT_OTP_OUTCOME, SKIP);
 
@@ -389,7 +381,6 @@ public class CustomAuthFlowOTPTest extends AbstractCustomAccountManagementTest {
 
         configureOTP();
         testRealmLoginPage.form().login(testUser);
-        testRealmLoginPage.form().totpForm().waitForTotpInputFieldPresent();
 
         //verify that the page is login page, not totp setup
         assertCurrentUrlStartsWith(testLoginOneTimeCodePage);

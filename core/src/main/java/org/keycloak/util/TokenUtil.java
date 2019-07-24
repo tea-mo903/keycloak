@@ -38,6 +38,8 @@ public class TokenUtil {
 
     public static final String TOKEN_TYPE_BEARER = "Bearer";
 
+    public static final String TOKEN_TYPE_KEYCLOAK_ID = "Serialized-ID";
+
     public static final String TOKEN_TYPE_ID = "ID";
 
     public static final String TOKEN_TYPE_REFRESH = "Refresh";
@@ -48,6 +50,8 @@ public class TokenUtil {
     public static String attachOIDCScope(String scopeParam) {
         if (scopeParam == null || scopeParam.isEmpty()) {
             return OAuth2Constants.SCOPE_OPENID;
+        } else if (hasScope(scopeParam, OAuth2Constants.SCOPE_OPENID)) {
+            return scopeParam;
         } else {
             return OAuth2Constants.SCOPE_OPENID + " " + scopeParam;
         }

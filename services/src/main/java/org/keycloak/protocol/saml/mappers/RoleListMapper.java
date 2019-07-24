@@ -19,20 +19,21 @@ package org.keycloak.protocol.saml.mappers;
 
 import org.keycloak.dom.saml.v2.assertion.AttributeStatementType;
 import org.keycloak.dom.saml.v2.assertion.AttributeType;
-import org.keycloak.models.AuthenticatedClientSessionModel;
+import org.keycloak.models.ClientSessionContext;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.KeycloakSessionFactory;
 import org.keycloak.models.ProtocolMapperModel;
-import org.keycloak.models.RealmModel;
+import org.keycloak.models.RoleModel;
 import org.keycloak.models.UserSessionModel;
 import org.keycloak.models.utils.RoleUtils;
 import org.keycloak.protocol.ProtocolMapper;
+import org.keycloak.protocol.ProtocolMapperUtils;
 import org.keycloak.protocol.saml.SamlProtocol;
 import org.keycloak.provider.ProviderConfigProperty;
-import org.keycloak.services.managers.ClientSessionCode;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -111,18 +112,16 @@ public class RoleListMapper extends AbstractSAMLProtocolMapper implements SAMLRo
     }
 
     @Override
-    public void mapRoles(AttributeStatementType roleAttributeStatement, ProtocolMapperModel mappingModel, KeycloakSession session, UserSessionModel userSession, AuthenticatedClientSessionModel clientSession) {
+    public void mapRoles(AttributeStatementType roleAttributeStatement, ProtocolMapperModel mappingModel, KeycloakSession session, UserSessionModel userSession, ClientSessionContext clientSessionCtx) {
         String single = mappingModel.getConfig().get(SINGLE_ROLE_ATTRIBUTE);
         boolean singleAttribute = Boolean.parseBoolean(single);
 
         List<SamlProtocol.ProtocolMapperProcessor<SAMLRoleNameMapper>> roleNameMappers = new LinkedList<>();
-        KeycloakSessionFactory sessionFactory = session.getKeycloakSessionFactory();
         AttributeType singleAttributeType = null;
-        Set<ProtocolMapperModel> requestedProtocolMappers = ClientSessionCode.getRequestedProtocolMappers(clientSession.getProtocolMappers(), clientSession.getClient());
-        for (ProtocolMapperModel mapping : requestedProtocolMappers) {
 
-            ProtocolMapper mapper = (ProtocolMapper)sessionFactory.getProviderFactory(ProtocolMapper.class, mapping.getProtocolMapper());
-            if (mapper == null) continue;
+        for (Map.Entry<ProtocolMapperModel, ProtocolMapper> entry : ProtocolMapperUtils.getSortedProtocolMappers(session, clientSessionCtx)) {
+            ProtocolMapperModel mapping = entry.getKey();
+            ProtocolMapper mapper = entry.getValue();
 
             if (mapper instanceof SAMLRoleNameMapper) {
                 roleNameMappers.add(new SamlProtocol.ProtocolMapperProcessor<>((SAMLRoleNameMapper) mapper,mapping));
@@ -145,12 +144,8 @@ public class RoleListMapper extends AbstractSAMLProtocolMapper implements SAMLRo
             }
         }
 
-        RealmModel realm = clientSession.getRealm();
-        List<String> allRoleNames = clientSession.getRoles().stream()
+        List<String> allRoleNames = clientSessionCtx.getRoles().stream()
           // todo need a role mapping
-          .map(realm::getRoleById)
-          .filter(Objects::nonNull)
-          .flatMap(RoleUtils::expandCompositeRolesStream)
           .map(roleModel -> roleNameMappers.stream()
             .map(entry -> entry.mapper.mapName(entry.model, roleModel))
             .filter(Objects::nonNull)
@@ -181,7 +176,6 @@ public class RoleListMapper extends AbstractSAMLProtocolMapper implements SAMLRo
         mapper.setName(name);
         mapper.setProtocolMapper(PROVIDER_ID);
         mapper.setProtocol(SamlProtocol.LOGIN_PROTOCOL);
-        mapper.setConsentRequired(false);
         Map<String, String> config = new HashMap<>();
         config.put(AttributeStatementHelper.SAML_ATTRIBUTE_NAME, samlAttributeName);
         if (friendlyName != null) {
